@@ -35,6 +35,11 @@ auto-completion. It is friendly to both humans and LLM/Agent workflows.
 Download a pre-built binary from the [Releases page](../../releases) page, or
 use one of the options below.
 
+> 🤖 **For Agents:** you can install and drive this tool automatically. For a
+> compact, machine-readable quickstart (install commands, flags, JSON output),
+> read the [`llms.txt`](llms.txt) file in this repo — then simply run
+> `m3u8dl --url <playlist-url> --json`.
+
 ### Option 0 — GitHub Release (pre-compiled binaries)
 
 Pre-built binaries are available for **Linux / macOS / Windows** on

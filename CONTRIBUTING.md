@@ -111,6 +111,38 @@ Follow the [Conventional Commits](https://www.conventionalcommits.org/) spec:
   - `fix(download): resume missing segments on re-run`
   - `docs: add quick-start examples`
 
+### Atomic Commits (one logical change per commit)
+
+Keep commits **atomic and self-contained**: each commit should represent exactly
+one logical change, be independent, complete, and standalone-revertible, so the
+history stays easy to review, bisect, and roll back.
+
+What "atomic" means in practice:
+
+- **One commit per logical unit.** If your work mixes a bug fix and a new feature,
+  split them: `fix: ...` and `feat: ...`. Do not bundle unrelated edits into one
+  commit.
+- **Every commit builds and passes.** A commit should leave the tree in a working
+  state (compiles, `make style-check` + `go vet` pass) so any intermediate commit
+  can be checked out or bisected safely.
+- **Atomic at the line/file level.** Prefer staging only the files/lines that
+  belong to the change (`git add <file>` or `git add -p`). Avoid committing
+  incidental formatting, whitespace, or refactor noise in the same commit unless
+  it is part of the change.
+- **A clear, scoped subject.** Each commit message's `<scope>` and body should
+  describe exactly what that one change does, so a reader can understand it in
+  isolation.
+- **Keep it reversible.** Avoid a commit whose revert would break or lose data.
+
+Example — instead of one big commit, prefer:
+
+```bash
+git add m3u8dl.go          # add the fix only
+git commit -m "fix(download): resume missing segments on re-run"
+git add README.md          # then the docs
+git commit -m "docs: document resume behavior"
+```
+
 ### Code Style
 
 - Run `gofmt` (Go uses tabs for indentation).

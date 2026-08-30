@@ -1,8 +1,12 @@
 # AGENTS.md
 
-Guidance for coding agents (and humans who want to use this project) working in
-the **m3u8dl** repository. Read this before making changes or automating
-downloads with the tool.
+**This file is for developer agents (and contributing humans) working *on* the
+m3u8dl codebase.** Read it before writing or changing code here.
+
+> 📌 Role split: if you are using the tool (installing, downloading with it),
+> read [`llms.txt`](llms.txt) / [`README.md`](README.md) instead. This file only
+> covers contributing to the source — code style, development workflow,
+> committing, and open-source collaboration.
 
 ## Project Overview
 
@@ -44,7 +48,8 @@ For editor-agnostic consistency also enable the optional `pre-commit` framework
 
 - `README.md` — English (primary)
 - `README.zh.md` — 简体中文 (Simplified Chinese)
-- `llms.txt` — machine-readable summary for LLM/Agent onboarding
+- `llms.txt` — machine-readable quickstart for **users & their agents**
+  (install/usage/flags). This file (`AGENTS.md`) covers **development** only.
 
 ## Code Style & Conventions
 
@@ -56,22 +61,63 @@ For editor-agnostic consistency also enable the optional `pre-commit` framework
   function maps them to non-zero exit codes.
 - Uses atomic counters in hot concurrent paths (see `downloader`).
 
+## Development Workflow (every change)
+
+Follow this loop for any code change so PRs land clean and reviewable:
+
+1. **Branch first** — never commit directly to `main`. Create a focused branch:
+   `git checkout -b feat/my-change` (see branches below).
+2. **Write the change** — keep it minimal and aligned with the conventions
+   above: English comments, single-file/single-package, atomic concurrency.
+3. **Format & verify** — run `make build` (runs gofmt + go vet + build). Before
+   committing, ensure `make style-check` passes (EOF newline, no trailing
+   whitespace, LF line endings).
+4. **Commit with a Conventional Commits message** — the `commit-msg` hook
+   enforces this. Prefix: `feat|fix|docs|style|refactor|perf|test|chore|ci|build`.
+   Bypass a hook temporarily with `SKIP=1 git commit ...` (do not leave bypassed).
+5. **Open a PR against `main`** using `.github/PULL_REQUEST_TEMPLATE.md`.
+   CI (`ci.yml`) runs gofmt, `go vet`, golangci-lint, tests, and cross-OS builds.
+
+### Atomic Commits (line-level)
+
+Keep every commit **atomic, independent and complete**: one logical change per
+commit, staged at the line/file level, so the history is easy to review, bisect
+and revert.
+
+- **One logical change per commit.** Split mixed work (e.g. a fix + a feature)
+  into separate commits; do not bundle unrelated edits together.
+- **Stage only what belongs** — use `git add <file>` or `git add -p` to stage the
+  exact files/lines of one change. Do not sweep in incidental
+  formatting/whitespace/refactor noise in the same commit.
+- **Every commit leaves the tree working** — each commit should build and pass
+  `make style-check` / `go vet`, so any intermediate commit can be checked out or
+  bisected safely, and reverted without collateral damage.
+- **Scoped, descriptive subject** — each message's `<scope>`/body reflects exactly
+  that one change, understandable in isolation.
+
+## Branching & Versioning
+
+- `main` is the default; merge only via reviewed PRs.
+- Use [Conventional Commits](CONTRIBUTING.md#commit-messages) so releases and
+  changelogs are generated cleanly.
+- Releases are cut by tagging (`v1.2.3`) and published by goreleaser via the
+  `release` workflow — do not manually edit `dist/` or commit binaries.
+
+## Open-Source Collaboration & Code Review
+
+- Be kind and specific in reviews; explain *why*, suggest concrete improvements.
+- Respect the [CONTRIBUTING.md](CONTRIBUTING.md) guidelines and the
+  [Contributor Covenant](CODE_OF_CONDUCT.md).
+- Keep PRs small and single-purpose; rebase on `main` and resolve locally.
+- Never commit secrets, tokens, credentials, or third-party media.
+- When reviewing, verify: no data races (`go test -race`), errors handled via
+  `failCode`/`exitError`, and no stray generated files staged.
+
 ## Version Info
 
 Version is injected at build time via ldflags. See `versionString()` in
 `m3u8dl.go`. goreleaser injects `version`, `commit`, and `date`. For manual
 builds these fall back to a dev description.
-
-### For agents that automate downloads with this tool
-
-- **Prefer `--json`**: `m3u8dl --url <m3u8> --json` prints a single JSON object
-  to stdout where `ok:true` means success. Logs go to stderr.
-- Use `--threads` to trade speed vs. server friendliness (default 24).
-- For a list of URLs, use `--list file.txt`; each line is one m3u8 URL.
-- Exit code is non-zero on failure — always check it.
-- To drive the tool when it isn't the current directory, still run yes — but a
-  reminder: resume works because the ts directory is kept on failure; re-running the
-  same command fetches only the missing segments.
 
 ## Testing Notes
 

@@ -2,6 +2,14 @@
 
 > A multi-threaded m3u8 video downloader written in Go.
 
+## Purpose of this file
+
+This `llms.txt` is written for **users who want to download, install and use
+m3u8dl** — humans and the AI assistants/agents that act on their behalf. It is a
+compact, machine-readable quickstart: focus on *how to obtain and drive the
+tool*, not on source code. If you are instead developing the codebase, see
+[`AGENTS.md`](AGENTS.md), which is scoped to the project's developers.
+
 m3u8dl downloads an m3u8 playlist's TS segments concurrently, supports AES
 decryption, nested/master playlists, ad dedup and resume-from-breakpoint, then
 merges them into a single MP4 using system `ffmpeg` (built-in merge fallback).
@@ -29,7 +37,7 @@ For users in China/slow networks, prefix the download URL with a mirror (e.g.
 go install github.com/dingdayu/m3u8dl@latest
 ```
 
-## Quick Usage (for Agents)
+## Quick Usage
 
 Always prefer `--json`; results print to **stdout**, logs to **stderr**:
 
@@ -55,16 +63,27 @@ Common flags:
 Exit code is non-zero on failure. On partial failure, the ts directory is kept;
 re-running the same command resumes only the missing segments.
 
+## Tips for automation
+
+- Prefer `--json` and parse only stdout (`ok:true` == success).
+- `--threads` trades speed vs. server friendliness (default 24).
+- For many URLs, use `--list file.txt` (one m3u8 URL per line).
+- Always check the exit code; it is non-zero on failure.
+- If a run fails partway, the ts directory is kept — re-running the same command
+	fetches only the missing segments (resume).
+
 ## Key Files
 
-- [m3u8dl.go](m3u8dl.go) — entire CLI + core logic
-- [README.zh.md](README.zh.md) — Simplified Chinese docs + China download guide
+Useful files if you need more detail:
+
+- [README.md](README.md) — full human-facing documentation (English)
+- [README.zh.md](README.zh.md) — full documentation (简体中文) + China
+  download acceleration guide
 - [LICENSE](LICENSE) — MIT license
-- [CONTRIBUTING.md](CONTRIBUTING.md) — how to contribute
-- [AGENTS.md](AGENTS.md) — guidance for AI agents working in the repo
-- [.goreleaser.yml](.goreleaser.yml) — release build configuration
-- [.hooks/](.hooks/) + [.pre-commit-config.yaml](.pre-commit-config.yaml) —
-	git hooks (gofmt/vet/style/conventional-commits); enable with `make install-hooks`
+
+> Developer-only docs (code style, workflows, contributing): see
+> [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md) — those are
+> meant for people/agents working *on* the source, not for using the tool.
 
 ## Optional
 

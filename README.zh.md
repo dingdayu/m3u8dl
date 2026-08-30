@@ -32,6 +32,10 @@ CLI 基于 [cobra](https://github.com/spf13/cobra)：语义化长参数 + 短别
 
 从 [Releases](../../releases) 页面下载预编译二进制，或：
 
+> 🤖 **给 Agent/自动化：** 你可以自动安装并驱动此工具。仓库根目录的
+> [`llms.txt`](llms.txt) 提供了紧凑、机器可读的快速入门（安装命令、参数、
+> JSON 输出），直接运行 `m3u8dl --url <播放列表地址> --json` 即可。
+
 ### 方式 A — `go install`（需 Go 1.27+）
 
 ```bash
