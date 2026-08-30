@@ -78,6 +78,33 @@ release-snapshot: ## build a local snapshot with goreleaser (no publish)
 app-version: ## print the current application version (used by release helpers)
 	@echo $(VERSION)
 
+.PHONY: install-hooks
+install-hooks: ## install git hooks (core.hooksPath -> .hooks)
+	@chmod +x .hooks/pre-commit .hooks/commit-msg .hooks/install.sh
+	git config core.hooksPath .hooks
+	@echo "Hooks installed. Active: pre-commit (gofmt/vet/style), commit-msg (conventional commits)."
+
+.PHONY: style
+style: ## normalize text files (LF + EOF newline + no trailing whitespace)
+	@chmod +x scripts/normalize-format.sh
+	@scripts/normalize-format.sh
+
+.PHONY: style-check
+style-check: ## check only; exit 1 if any file is not normalized
+	@chmod +x scripts/normalize-format.sh
+	@scripts/normalize-format.sh --check
+	@echo "Style normalization done. Review changes with: git diff --stat"
+
+.PHONY: pre-commit
+pre-commit: ## run the pre-commit framework hooks across the repo (if installed)
+	@command -v pre-commit >/dev/null 2>&1 || { \
+		echo "pre-commit not found. Install: pip install pre-commit"; exit 1; }; \
+	pre-commit run --all-files
+
+.PHONY: commit-msg-check
+commit-msg-check: ## check the latest commit message against Conventional Commits
+	@.hooks/commit-msg <(git log -1 --format=%s) ; echo "exit code: $$?" || true
+
 .PHONY: clean
 clean: ## remove build artifacts
 	rm -rf $(BIN_DIR) dist

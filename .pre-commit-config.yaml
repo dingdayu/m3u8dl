@@ -1,0 +1,53 @@
+# pre-commit hooks for m3u8dl.
+#
+# Requires Python + pre-commit:
+#   pip install pre-commit
+#   pre-commit install          # installs hooks into .git/hooks
+#   pre-commit run --all-files  # run once over the whole repo
+#
+# These hooks enforce consistent formatting (EOF newline, trailing whitespace,
+# mixed line endings), Go checks (gofmt, go vet, golangci-lint), and YAML/JSON
+# validity regardless of which editor/OS contributors use.
+repos:
+  # Generic file hygiene: fixes EOF newline, trailing whitespace, mixed line endings.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: end-of-file-fixer          # ensure every file ends with a single newline
+      - id: trailing-whitespace        # trim trailing whitespace
+      - id: check-yaml                 # validate YAML (also catches .github/workflows)
+      - id: check-json                 # validate JSON
+      - id: check-added-large-files    # block accidentally committed big files
+        args: ["--maxkb=2048"]
+      - id: check-merge-conflict       # no unresolved merge conflict markers
+      - id: mixed-line-ending          # enforce consistent line endings (LF)
+        args: ["--fix=lf"]
+
+  # Go-specific checks: gofmt + go vet (fast). golangci-lint is heavy; kept separate.
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt
+        description: Format Go source code (gofmt).
+        entry: gofmt -l .
+        language: system
+        pass_filenames: false
+        fail_fast: true
+
+      - id: go-vet
+        name: go vet
+        description: Run go vet to catch suspicious constructs.
+        entry: go vet ./...
+        language: system
+        pass_filenames: false
+        fail_fast: true
+
+  # golangci-lint is opt-in here (slower, requires golangci-lint installed).
+  # Uncomment to enable local golangci-lint:
+  # - repo: local
+  #   hooks:
+  #     - id: golangci-lint
+  #       name: golangci-lint
+  #       entry: golangci-lint run
+  #       language: system
+  #       pass_filenames: false

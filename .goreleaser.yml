@@ -45,6 +45,7 @@ archives:
       {{- else }}{{ .Arch }}{{ end }}
     files:
       - README.md
+      - README.zh.md
       - LICENSE
       - SECURITY.md
 

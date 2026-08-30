@@ -1,5 +1,7 @@
 # m3u8dl
 
+> 🌐 <b>Language</b>: **English** | [**简体中文**](README.zh.md)
+
 A fast, multi-threaded **m3u8 video downloader** written in Go.
 
 It parses an m3u8 playlist, downloads all TS segments concurrently, and merges
@@ -30,7 +32,27 @@ auto-completion. It is friendly to both humans and LLM/Agent workflows.
 
 ## Installation
 
-Download a pre-built binary from the [Releases page](../../releases) page, or:
+Download a pre-built binary from the [Releases page](../../releases) page, or
+use one of the options below.
+
+### Option 0 — GitHub Release (pre-compiled binaries)
+
+Pre-built binaries are available for **Linux / macOS / Windows** on
+**amd64 / arm64**. Download and unpack, e.g. `v1.0.0` on Linux/amd64:
+
+```bash
+curl -fSL -o m3u8dl.tar.gz \
+    "https://github.com/dingdayu/m3u8dl/releases/download/v1.0.0/m3u8dl_v1.0.0_linux_amd64.tar.gz"
+tar -xzf m3u8dl.tar.gz
+chmod +x m3u8dl
+sudo mv m3u8dl /usr/local/bin/
+m3u8dl --version
+```
+
+> **China / slow network?** GitHub downloads can be slow there. Use a trusted
+> mirror prefix for the same URL (e.g. `https://ghfast.top/`) or a one-click
+> install script. See the
+> [**China download acceleration guide**](README.zh.md#国内加速下载) for details.
 
 ### Option A — `go install` (requires Go 1.27+)
 
@@ -154,8 +176,24 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines, and
 make build       # build to ./bin/m3u8dl
 make test        # run tests
 make lint        # run golangci-lint
+make install-hooks   # install git hooks (style/format/conventional-commits)
 make release     # run goreleaser (requires goreleaser installed)
 ```
+
+### Git hooks & editor-agnostic style
+
+This repo ships commit hooks and style tooling so the codebase stays clean no
+matter which editor/OS contributors use (EOF newlines, trailing whitespace,
+mixed line endings, Go formatting, commit-message conventions):
+
+- `make install-hooks` → sets `core.hooksPath` to `.hooks/`
+    - `.hooks/pre-commit` — checks/fixes `gofmt`, `go vet`, EOF newline,
+        trailing whitespace, LF line endings
+    - `.hooks/commit-msg` — enforces [Conventional Commits](CONTRIBUTING.md#commit-messages)
+- Optional `pre-commit` framework (`.pre-commit-config.yaml`) with
+    `end-of-file-fixer`, `trailing-whitespace`, `check-yaml`, `check-json`, …
+- `.gitattributes` — forces LF, declares text/binary, helps GitHub Linguist
+- `.editorconfig` — editor-agnostic indent/encoding/eol defaults
 
 ---
 
@@ -171,3 +209,7 @@ make release     # run goreleaser (requires goreleaser installed)
 ## License
 
 [MIT](LICENSE) © [dingdayu](https://github.com/dingdayu)
+
+---
+
+🌐 中文文档见 [README.zh.md](README.zh.md)

@@ -25,8 +25,26 @@ everything into a single `.mp4` using `ffmpeg` (with a built-in fallback).
 make build        # lint + build to ./bin/m3u8dl
 make test         # run go test
 make lint         # run golangci-lint
+make install-hooks  # install git hooks (core.hooksPath -> .hooks)
 make release      # run goreleaser release
 ```
+
+After cloning, run `make install-hooks` (or `.hooks/install.sh`) once. This
+sets `core.hooksPath` so the version-controlled hooks under `.hooks/` run on
+every local commit:
+
+- `pre-commit` — `gofmt` + `go vet` + EOF-newline / trailing-whitespace /
+  LF enforcement (auto-fixes where possible).
+- `commit-msg` — enforces Conventional Commits. Bypass with `SKIP=1 git commit ...`.
+
+For editor-agnostic consistency also enable the optional `pre-commit` framework
+(`.pre-commit-config.yaml`) and rely on `.gitattributes` / `.editorconfig`.
+
+## Documentation languages
+
+- `README.md` — English (primary)
+- `README.zh.md` — 简体中文 (Simplified Chinese)
+- `llms.txt` — machine-readable summary for LLM/Agent onboarding
 
 ## Code Style & Conventions
 

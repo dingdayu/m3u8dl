@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Git commit-msg hook for m3u8dl.
+#
+# Enforces Conventional Commits format for commit messages:
+#   <type>(<scope>): <subject>
+#   <BLANK LINE>
+#   <body>
+#
+# Types: feat | fix | docs | style | refactor | perf | test | chore | ci | build | revert
+#
+# Set SKIP=1 to bypass:   SKIP=1 git commit ...
+set -euo pipefail
+
+MSG_FILE="${1:-}"
+if [ -z "$MSG_FILE" ] || [ ! -f "$MSG_FILE" ]; then
+  exit 0
+fi
+
+if [ "${SKIP:-}" = "1" ]; then
+  exit 0
+fi
+
+# A Conventional Commits message starts with a valid type (optional scope).
+# Multi-line subjects like merges may appear; allow common merge/revert lines too.
+PATTERN='^(feat|fix|docs|style|refactor|perf|test|chore|ci|build|revert)(\([a-zA-Z0-9_.\-]+\))?!?: .+'
+# The subject is the first non-comment, non-empty line.
+SUBJECT=$(grep -v '^#' "$MSG_FILE" | grep -v '^$' | head -n1 || true)
+
+if [ -z "$SUBJECT" ]; then
+  echo "commit-msg: empty commit message."
+  exit 1
+fi
+
+if [ "${SUBJECT:0:4}" = "Revert" ] || [ "${SUBJECT:0:6}" = "Merge " ]; then
+  exit 0
+fi
+
+if ! echo "$SUBJECT" | grep -qE "$PATTERN"; then
+  echo "commit-msg: commit message does not follow Conventional Commits."
+  echo ""
+  echo "  Expected format:"
+  echo "    <type>(<scope>): <subject>"
+  echo ""
+  echo "  Allowed types: feat | fix | docs | style | refactor | perf | test |"
+  echo "                 chore | ci | build | revert"
+  echo ""
+  echo "  Examples:"
+  echo "    feat: support per-segment AES keys"
+  echo "    fix(download): resume missing segments on re-run"
+  echo "    docs: add quick-start examples"
+  echo ""
+  echo "  Got: $SUBJECT"
+  echo ""
+  echo "  To bypass this check: SKIP=1 git commit ..."
+  exit 1
+fi
+
+exit 0

@@ -14,6 +14,20 @@ merges them into a single MP4 using system `ffmpeg` (built-in merge fallback).
 - Install: `go install github.com/dingdayu/m3u8dl@latest`
 - Repo: https://github.com/dingdayu/m3u8dl
 - Docs (human): https://github.com/dingdayu/m3u8dl/blob/main/README.md
+- Docs (简体中文): https://github.com/dingdayu/m3u8dl/blob/main/README.zh.md
+
+## Install (binaries)
+
+Pre-built binaries (linux/darwin/windows × amd64/arm64) are on the **Releases**
+page. Naming: `m3u8dl_<ver>_<OS>_<ARCH>.tar.gz`.
+
+For users in China/slow networks, prefix the download URL with a mirror (e.g.
+`https://ghfast.top/`) or see the one-line install script and mirror list in
+`README.zh.md#国内加速下载`.
+
+```bash
+go install github.com/dingdayu/m3u8dl@latest
+```
 
 ## Quick Usage (for Agents)
 
@@ -44,10 +58,13 @@ re-running the same command resumes only the missing segments.
 ## Key Files
 
 - [m3u8dl.go](m3u8dl.go) — entire CLI + core logic
+- [README.zh.md](README.zh.md) — Simplified Chinese docs + China download guide
 - [LICENSE](LICENSE) — MIT license
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to contribute
 - [AGENTS.md](AGENTS.md) — guidance for AI agents working in the repo
 - [.goreleaser.yml](.goreleaser.yml) — release build configuration
+- [.hooks/](.hooks/) + [.pre-commit-config.yaml](.pre-commit-config.yaml) —
+	git hooks (gofmt/vet/style/conventional-commits); enable with `make install-hooks`
 
 ## Optional
 

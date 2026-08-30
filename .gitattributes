@@ -1,0 +1,49 @@
+# .gitattributes — normalize line endings & declare file types for m3u8dl.
+#
+# Purpose:
+#   - Force LF line endings for all text files so every editor/OS sees the same
+#     content (avoids "different editors add/remove newline" drift).
+#   - Mark files as text (normalized) vs binary so git can diff/merge properly.
+#   - Help GitHub Linguist attribute this repo correctly.
+
+# Default: text files are normalized (LF on check-in, checkout uses repo value).
+* text=auto eol=lf
+
+# Shell scripts: preserve executable semantics; force LF.
+*.sh text eol=lf
+.hooks/* text eol=lf
+
+# Go source: tabs are significant — force LF.
+*.go text eol=lf
+
+# Config & docs: LF.
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+Makefile text eol=lf
+.gitignore text eol=lf
+.editorconfig text eol=lf
+
+# Binary / generated files that must never be normalized.
+*.mp4 binary
+*.ts binary
+*.part binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.zip binary
+*.tar.gz binary
+*.exe binary
+*.so binary
+*.dylib binary
+*.dll binary
+
+# Linguist: treat documentation as documentation, not "code".
+*.md linguist-documentation
+README.md linguist-documentation=true
+README.zh.md linguist-documentation=true
+*.yaml linguist-documentation=false
+*.yml linguist-documentation=false
