@@ -1,0 +1,30 @@
+# golangci-lint configuration for m3u8dl.
+# Docs: https://golangci-lint.run/usage/configuration
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    # Additional useful linters (optional, comment out those you don't want):
+    - gofmt
+    - goimports
+    - misspell
+    - unconvert
+  disable-all: true
+  fast: false
+
+issues:
+  exclude-rules:
+    # Progress-bar drawing writes with fmt.Print without checking errors.
+    - linters: [errcheck]
+      text: "fmt.Print|fmt.Fprint|out.Write"
+    # The status-code 599 sentinel is intentional for failed HTTP responses.
+    - linters: [staticcheck]
+      text: "SU"

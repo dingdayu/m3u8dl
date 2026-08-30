@@ -1,15 +1,23 @@
-# 编译产物
+# Build artifacts
 /m3u8dl
+/bin/
+/dist/
 
-# macOS 系统文件
+# macOS system files
 .DS_Store
 
-# 下载过程产生的临时/输出文件
+# Download process temporary/output files
 *.mp4
 *.ts
 *.part
 *.m3u8
 movie/
 
-# 测试与本地运行产物
+# Test and local run artifacts
 *.log
+coverage.out
+
+# Editors
+.vscode/
+.idea/
+*.swp

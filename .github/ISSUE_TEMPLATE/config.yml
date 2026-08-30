@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Q&A / Discussion
+    url: https://github.com/dingdayu/m3u8dl/discussions
+    about: Ask questions and discuss ideas, use cases, and roadmap items here.
+  - name: Security
+    url: https://github.com/dingdayu/m3u8dl/security/policy
+    about: Please report security vulnerabilities privately, not via public issues.

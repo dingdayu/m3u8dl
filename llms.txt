@@ -1,0 +1,55 @@
+# m3u8dl
+
+> A multi-threaded m3u8 video downloader written in Go.
+
+m3u8dl downloads an m3u8 playlist's TS segments concurrently, supports AES
+decryption, nested/master playlists, ad dedup and resume-from-breakpoint, then
+merges them into a single MP4 using system `ffmpeg` (built-in merge fallback).
+
+## Core Facts
+
+- License: MIT
+- Language: Go (Go 1.27+), cobra for the CLI
+- Module: `github.com/dingdayu/m3u8dl`
+- Install: `go install github.com/dingdayu/m3u8dl@latest`
+- Repo: https://github.com/dingdayu/m3u8dl
+- Docs (human): https://github.com/dingdayu/m3u8dl/blob/main/README.md
+
+## Quick Usage (for Agents)
+
+Always prefer `--json`; results print to **stdout**, logs to **stderr**:
+
+```bash
+m3u8dl --url https://example.com/index.m3u8 --json
+# {"ok":true,"path":".../movie.mp4","duration_sec":12.3,"mode":"single",...}
+```
+
+Common flags:
+
+| Flag | Meaning | Default |
+| --- | --- | --- |
+| `-u/--url` | m3u8 URL (or first positional arg) | — |
+| `-n/--threads` | download concurrency | 24 |
+| `-o/--output` | output filename (no ext) | `movie` |
+| `--host-type` | v1 / v2 / auto host resolution | `v2` |
+| `--purge-dup` | remove ad/duplicate segments | off |
+| `--save-path` | output directory | current dir |
+| `-j/--json` | structured JSON result | off |
+| `-l/--list` | batch list file, one URL per line | — |
+| `-s/--insecure` | allow insecure TLS | off |
+
+Exit code is non-zero on failure. On partial failure, the ts directory is kept;
+re-running the same command resumes only the missing segments.
+
+## Key Files
+
+- [m3u8dl.go](m3u8dl.go) — entire CLI + core logic
+- [LICENSE](LICENSE) — MIT license
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to contribute
+- [AGENTS.md](AGENTS.md) — guidance for AI agents working in the repo
+- [.goreleaser.yml](.goreleaser.yml) — release build configuration
+
+## Optional
+
+- Release binaries: see the repo **Releases** page.
+- Homebrew tap: not published yet (roadmap).

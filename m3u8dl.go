@@ -1,10 +1,13 @@
-// Go 多线程 m3u8 视频下载器。
+// m3u8dl is a multi-threaded m3u8 video downloader.
 //
-// 功能：解析 m3u8，多线程下载 ts 切片（支持 AES 加密、嵌套 m3u8、广告切片去重、
-// 断点续传），优先调用系统 ffmpeg 无损合并为 mp4，缺失时回退内置合并。
+// Features: parse m3u8, download ts segments concurrently (AES encryption,
+// nested m3u8, ad/duplicate segment deduplication, resume from breakpoint),
+// prefer system ffmpeg for lossless merge to mp4, fall back to built-in merge
+// when ffmpeg is unavailable.
 //
-// CLI 基于 cobra，长选项语义化命名并保留 -u 等短别名，支持 --help/--json/
-// --version/自动补全，对人与 LLM/Agent 均友好。
+// The CLI is built with cobra: semantic long flags with short aliases like -u,
+// supports --help/--json/--version/auto-completion, friendly to both humans
+// and LLM/Agent workflows.
 
 package main
 
@@ -36,26 +39,45 @@ import (
 )
 
 const (
-	// PROGRESS_WIDTH 进度条长度
+	// PROGRESS_WIDTH is the length of the progress bar
 	PROGRESS_WIDTH = 20
-	// TS_NAME_TEMPLATE ts视频片段命名规则
+	// TS_NAME_TEMPLATE is the filename template for ts segments
 	TS_NAME_TEMPLATE = "%05d.ts"
-	// SYNC_BYTE MPEG-TS 同步字节 0x47
+	// SYNC_BYTE is the MPEG-TS sync byte 0x47
 	SYNC_BYTE = 0x47
-	// TS_DOWNLOAD_RETRY 单个 ts 下载最大重试次数
+	// TS_DOWNLOAD_RETRY is the max download retry times per ts segment
 	TS_DOWNLOAD_RETRY = 5
 )
 
-// version 可编译期注入：-ldflags "-X main.version=1.0.0"
-var version = "dev"
+// Build-time variables, injected by goreleaser / ldflags, e.g.:
+//
+//	-ldflags "-X 'main.version=1.2.3' -X 'main.commit=abc123' -X 'main.date=2026-08-30T00:00:00Z'"
+//
+// When unset they fall back to a "dev build" description so manual builds still
+// report something meaningful for --version.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
 
-// ============================== CLI 层 (cobra) ==============================
+// versionString composes the human-readable version info shown by --version.
+func versionString() string {
+	if version == "dev" {
+		return "dev build"
+	}
+	return fmt.Sprintf("%s (commit=%s, built=%s)", version, commit, date)
+}
 
-// runOptions 收集本次执行的全部参数，避免层层透传的同时保持核心逻辑签名稳定。
-// 核心下载函数仍通过读取本全局 opts 完成（含 HTTP 请求配置），与旧版 flag 全局变量一致。
+// ============================== CLI layer (cobra) ==============================
+
+// runOptions collects all parameters for one execution, keeping core logic
+// signatures stable while avoiding parameter passing through every layer.
+// Core download functions read from the package-level opts below (including
+// HTTP request config), consistent with the legacy flag global variables.
 type runOptions struct {
 	url         string
-	urlListFile string // 批量列表文件，每行一个地址
+	urlListFile string // batch list file, one URL per line
 	movieName   string
 	savePath    string
 	threads     int
@@ -67,14 +89,14 @@ type runOptions struct {
 	headers     []string
 	purgeDup    bool
 	insecure    bool
-	autoClean   bool // 合并成功后是否删除 ts 目录
-	jsonOut     bool // 输出机器可解析的 JSON 结果
+	autoClean   bool // whether to remove the ts directory after a successful merge
+	jsonOut     bool // output machine-parsable JSON result
 }
 
-// opts 为运行期单例配置，runE 开头一次性填充。
+// opts is the runtime singleton config, filled once at the start of runE.
 var opts runOptions
 
-// httpOpts 复用全局 HTTP 请求配置，get() 直接读取（保持旧逻辑）。
+// The global HTTP request config, read directly by get() (keeps old logic).
 var (
 	reqTimeout = 120 * time.Second
 	reqHeaders = map[string]string{
@@ -87,11 +109,12 @@ var (
 	curUA              = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
 
-// logger 统一走 stderr：正常业务结果走 stdout，日志/进度/告警走 stderr，
-// 便于 LLM/Agent 只解析 stdout 的结构化结果。
+// logger writes to stderr: normal business results go to stdout while logs,
+// progress and warnings go to stderr, so LLM/Agent only needs to parse the
+// structured stdout output.
 var logger = log.New(os.Stderr, "", log.LstdFlags)
 
-// exitError 携带退出码，供 cobra 的 Execute 返回非零状态。
+// exitError carries an exit code so cobra's Execute can return non-zero status.
 type exitError struct {
 	code int
 	msg  string
@@ -103,7 +126,7 @@ func failCode(code int, format string, args ...any) error {
 	return &exitError{code: code, msg: fmt.Sprintf(format, args...)}
 }
 
-// resultJSON 最终下载结果的 JSON 结构（--json 时输出到 stdout）。
+// resultJSON is the JSON structure of the final result (printed to stdout with --json).
 type resultJSON struct {
 	OK       bool    `json:"ok"`
 	Path     string  `json:"path,omitempty"`
@@ -114,7 +137,7 @@ type resultJSON struct {
 	Mode     string  `json:"mode,omitempty"`
 }
 
-// newRootCmd 构建 cobra 根命令。
+// newRootCmd builds the cobra root command.
 func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "m3u8dl [flags] <m3u8-url> [outputName]",
@@ -133,7 +156,7 @@ func newRootCmd() *cobra.Command {
 		RunE: runRoot,
 	}
 
-	// 短别名与旧版保持一致，同时提供语义化长参数。
+	// Short aliases stay consistent with the old version, semantic long flags added.
 	f := cmd.Flags()
 	f.StringVarP(&opts.url, "url", "u", "", "m3u8 下载地址 (http(s)://url/xx/index.m3u8)")
 	f.IntVarP(&opts.threads, "threads", "n", 24, "下载线程数")
@@ -151,18 +174,18 @@ func newRootCmd() *cobra.Command {
 	f.StringVarP(&opts.urlListFile, "list", "l", "", "批量下载列表文件（每行一个 m3u8 地址）")
 	f.StringArrayVarP(&opts.headers, "header", "H", nil, "自定义请求头，可重复，格式 \"Key: Value\"")
 
-	// 设置自定义 --version 输出格式。
-	cmd.Version = version
+	// Set a custom --version output format using the injected/fallback version.
+	cmd.Version = versionString()
 	cmd.SetVersionTemplate("m3u8dl version {{.Version}}\n")
 
 	return cmd
 }
 
-// runRoot 是 cobra 的入口回调：负责填充运行期配置并执行下载。
+// runRoot is the cobra entry callback: populates runtime config and runs the download.
 func runRoot(cmd *cobra.Command, args []string) error {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
-	// 位置参数兜底：第一个为 URL，第二个为输出名（旧版兼容）。
+	// Positional argument fallback: first is URL, second is output name (legacy compat).
 	if opts.url == "" && len(args) > 0 {
 		opts.url = args[0]
 	}
@@ -173,7 +196,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		return failCode(1, "缺少 m3u8 地址：请用 -u <url> 指定，或 --list <文件> 批量，或直接用 -h 查看帮助")
 	}
 
-	// 请求配置一次性落地到全局（get() 直接读取）。
+	// Persist request config to globals in one go (read directly by get()).
 	reqTimeout = time.Duration(opts.timeoutSec) * time.Second
 	curUA = opts.userAgent
 	insecureSkipVerify = opts.insecure
@@ -199,7 +222,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		result, err = runSingle(opts, start)
 	}
 
-	// 统一错误向上传递（非 --json 时也打印友好消息）。
+	// Propagate errors upward uniformly (also prints friendly message when not --json).
 	if err != nil {
 		return err
 	}
@@ -216,13 +239,13 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// printJSON 编码并输出机器可解析的 JSON 到 stdout。
+// printJSON encodes and prints machine-parsable JSON to stdout.
 func printJSON(r resultJSON) {
 	b, _ := json.Marshal(r)
 	fmt.Println(string(b))
 }
 
-// runSingle 执行单个 m3u8 的完整下载。
+// runSingle performs a full download of a single m3u8.
 func runSingle(o runOptions, start time.Time) (resultJSON, error) {
 	pwdDir, err := os.Getwd()
 	if err != nil {
@@ -242,7 +265,7 @@ func runSingle(o runOptions, start time.Time) (resultJSON, error) {
 	}, nil
 }
 
-// runBatch 执行列表批量下载（每行一个 m3u8 地址）。
+// runBatch performs batch downloads from a list file (one m3u8 URL per line).
 func runBatch(listFile string, start time.Time) (resultJSON, error) {
 	data, err := os.ReadFile(listFile)
 	if err != nil {
@@ -279,12 +302,13 @@ func runBatch(listFile string, start time.Time) (resultJSON, error) {
 	return resultJSON{OK: true, Error: msg, Mode: "batch", Duration: time.Since(start).Seconds()}, nil
 }
 
-// legacyCompat 兼容旧版多字符单横线参数（-ht/-sp/-pd/-ua 等）。
-// pflag 的 shorthand 只能是单个字符，故这些历史参数在此映射为等价的语义化长参数，
-// 使旧脚本无需修改即可继续使用。值为必填的参数若被显式赋值（含 '='），原样保留。
+// legacyCompat maps legacy multi-character single-dash flags (-ht/-sp/-pd/-ua, etc.).
+// pflag shorthand can only be a single character, so these historical flags are
+// mapped here to equivalent semantic long flags, letting old scripts keep working
+// unchanged. Value-required flags explicitly assigned (with '=') are kept as-is.
 type legacyCompat struct {
-	old  string // 旧短参数名（不含前导 -）
-	long string // 对应的新长参数名（不含前导 --）
+	old  string // legacy short flag name (without leading -)
+	long string // corresponding new long flag name (without leading --)
 }
 
 var legacyFlags = []legacyCompat{
@@ -295,19 +319,19 @@ var legacyFlags = []legacyCompat{
 }
 
 var legacyNoValueFlags = []string{
-	"pd", // -pd 为布尔开关，无需值
+	"pd", // -pd is a boolean switch, takes no value
 }
 
-// rewriteLegacyArgs 将历史多字符单横线参数改写为长参数形式。
-// 单横线会被补成双横线：-ht v1  -> --host-type v1；-pd  -> --purge-dup。
+// rewriteLegacyArgs rewrites legacy multi-character single-dash args to long flags.
+// A single dash is turned into a double dash: -ht v1 -> --host-type v1; -pd -> --purge-dup.
 func rewriteLegacyArgs(args []string) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		// 只处理单横线非 "--" 形式
+		// Only handle single-dash, non "--" forms
 		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && len(arg) > 1 {
 			body := arg[1:]
-			// 形如 -ht=v1（内联赋值）
+			// Inline assignment form: -ht=v1
 			if eq := strings.Index(body, "="); eq > 0 {
 				key, val := body[:eq], body[eq+1:]
 				if m := matchLegacy(key); m != "" {
@@ -317,10 +341,10 @@ func rewriteLegacyArgs(args []string) []string {
 				out = append(out, arg)
 				continue
 			}
-			// 普通参数：-ht v1
+			// Plain arg: -ht v1
 			if m := matchLegacy(body); m != "" && !isLegacyNoValue(body) {
 				out = append(out, "--"+m)
-				// 把下一个 token 也加入（值为必填）
+				// Also append the next token (value is required)
 				if i+1 < len(args) {
 					i++
 					out = append(out, args[i])
@@ -356,13 +380,13 @@ func isLegacyNoValue(key string) bool {
 	return false
 }
 
-// main 使用 cobra 执行，非零错误码供 Agent/脚本判断。
-// 执行前先 rewriteLegacyArgs 兼容旧版多字符短参数。
+// main runs cobra, non-zero exit codes are for Agent/scripts to judge.
+// It rewrites legacy args via rewriteLegacyArgs before execution.
 func main() {
 	cmd := newRootCmd()
 	args := rewriteLegacyArgs(os.Args[1:])
 	cmd.SetArgs(args)
-	// 静默 cobra 默认的 Error+Usage 打印，由下方统一处理输出（JSON 或否则仅 stderr）
+	// Silence cobra's default Error+Usage printing; output handled below uniformly (JSON or stderr only)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
 	if err := cmd.Execute(); err != nil {
@@ -380,11 +404,14 @@ func main() {
 }
 
 // =============================================================================
-// 以下为核心下载逻辑，与旧版一致（仅 Run()/flag 相关部分被上方 cobra 层替换）。
+// ============================================================
+// Core download logic below (identical to legacy version, except Run()/flag
+// related parts were replaced by the cobra layer above).
 // =============================================================================
 
-// processOne 单个 m3u8 的完整下载流程：解析→下载→校验→去重→合并。
-// 返回合并后的 mp4 绝对路径；失败返回空字符串。单任务与批量任务共用。
+// processOne is the full download flow for a single m3u8: parse -> download ->
+// verify -> dedup -> merge. Returns the absolute path of the merged mp4; an empty
+// string on failure. Shared by both single and batch tasks.
 func processOne(m3u8Url, movieName string, maxGoroutines int, hostType, pwd string, autoClearFlag, purgeDup bool) string {
 	m3u8URL, err := url.Parse(m3u8Url)
 	if err != nil {
@@ -399,7 +426,7 @@ func processOne(m3u8Url, movieName string, maxGoroutines int, hostType, pwd stri
 	tsList := getTsList(m3u8Body, m3u8URL, hostType)
 	logger.Printf("待下载 ts 文件数量: %d", len(tsList))
 	downloader(tsList, maxGoroutines, downloadDir)
-	// 逐个校验 ts 片段；缺失则保留目录供二次运行续传
+	// Verify each ts segment; keep the dir for a re-run to resume if any missing
 	if missing := checkTsDownDir(downloadDir, len(tsList)); len(missing) > 0 {
 		logger.Printf("[Failed] 以下 %d 个 ts 片段缺失：%v", len(missing), missing)
 		logger.Printf("[提示] ts 目录已保留，请重新运行同一命令自动续传缺失片段。")
@@ -422,7 +449,7 @@ func processOne(m3u8Url, movieName string, maxGoroutines int, hostType, pwd stri
 	return moviePath
 }
 
-// getHost 获取m3u8地址的host
+// getHost returns the host of the m3u8 URL.
 func getHost(Url, ht string) (host string) {
 	u, err := url.Parse(Url)
 	if err != nil {
@@ -437,7 +464,7 @@ func getHost(Url, ht string) (host string) {
 	return
 }
 
-// getM3u8Body 获取m3u8地址的内容体
+// getM3u8Body fetches and returns the body of the m3u8 URL.
 func getM3u8Body(Url string) string {
 	res := get(Url)
 	defer res.Body.Close()
@@ -448,7 +475,8 @@ func getM3u8Body(Url string) string {
 	return string(body)
 }
 
-// get 发送 GET 请求，统一写入 UA/头/超时；非 2xx 视为失败返回空响应
+// get sends a GET request with unified UA/headers/timeout; non-2xx is treated as
+// a failure and returns an empty response.
 func get(url string) *http.Response {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -470,23 +498,24 @@ func get(url string) *http.Response {
 	}
 	res, err := client.Do(req)
 	if err != nil {
-		// 网络/DNS 等错误不 panic：返回一个空 body 的失败响应，
-		// 使单个坏地址只影响自身，不影响整批任务或连传流程。
+		// Network/DNS errors do not panic: return a failed response with an empty
+		// body so a bad URL only affects itself, not the whole batch or resume flow.
 		logger.Printf("[warn] GET 失败 %s: %v", url, err)
 		return &http.Response{
-			StatusCode: 599, // 自定义错误码，调用方按非 2xx 处理
+			StatusCode: 599, // custom error code, callers treat as non-2xx
 			Body:       io.NopCloser(strings.NewReader("")),
 			Header:     http.Header{},
 		}
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 400 {
-		res.Body.Close()                               // 释放真实 body
-		res.Body = io.NopCloser(strings.NewReader("")) // 非 2xx 视为无 body
+		res.Body.Close()                               // release the real body
+		res.Body = io.NopCloser(strings.NewReader("")) // treat non-2xx as no body
 	}
 	return res
 }
 
-// parseHeader 解析 "-header \"Key: Value\"" 到请求头，支持任意 HTTP 头覆盖
+// parseHeader parses "-header \"Key: Value\"" into request headers, supports
+// overriding any HTTP header.
 func parseHeader(line string) {
 	line = strings.TrimSpace(line)
 	if line == "" {
@@ -505,8 +534,9 @@ func parseHeader(line string) {
 	reqHeaders[k] = v
 }
 
-// getFullUrl 统一解析 ts/key 的完整下载地址
-// 【合并 ycq3/bkkkd】兼容绝对地址、"/根相对路径"、普通相对路径（含 ../ 多级跳转）
+// getFullUrl resolves the full download URL for ts/key segments.
+// [merged ycq3/bkkkd] Supports absolute URLs, "/root-relative paths", and normal
+// relative paths (including multi-level ../ jumps).
 func getFullUrl(line, host string, baseURL *url.URL) string {
 	line = strings.TrimSpace(line)
 	if strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") {
@@ -522,8 +552,9 @@ func getFullUrl(line, host string, baseURL *url.URL) string {
 	return baseURL.ResolveReference(u).String()
 }
 
-// getTsList 解析 ts 切片下载地址
-// 【合并 ycq3/bkkkd】支持嵌套 m3u8(Master Playlist)：遇到 .m3u8 行递归展开子列表
+// getTsList parses the download URLs of ts segments.
+// [merged ycq3/bkkkd] Supports nested m3u8 (Master Playlist): recursively expands
+// child lists when a .m3u8 line is encountered.
 func getTsList(body string, baseURL *url.URL, hostType string) (tsList []TsInfo) {
 	index := 1
 	return getTsListInternal(body, baseURL, hostType, &index)
@@ -535,7 +566,7 @@ func getTsListInternal(body string, baseURL *url.URL, hostType string, index *in
 	switch hostType {
 	case "auto":
 		host = getHost(baseURL.String(), "v1")
-		altHost = getHost(baseURL.String(), "v2") // v2 相对路径无法解析，仅对绝对/根路径有意义
+		altHost = getHost(baseURL.String(), "v2") // v2 can't resolve relative paths, only meaningful for absolute/root
 	case "v1":
 		altHost = getHost(baseURL.String(), "v2")
 	default:
@@ -548,7 +579,7 @@ func getTsListInternal(body string, baseURL *url.URL, hostType string, index *in
 		if line == "" {
 			continue
 		}
-		// 缓存当前加密 key（per-ts key）
+		// Cache the current encryption key (per-ts key)
 		if strings.Contains(line, "#EXT-X-KEY") && strings.Contains(line, "URI") {
 			start := strings.Index(line, `URI="`)
 			if start >= 0 {
@@ -566,7 +597,7 @@ func getTsListInternal(body string, baseURL *url.URL, hostType string, index *in
 		if strings.HasPrefix(line, "#") {
 			continue
 		}
-		// 嵌套 m3u8：Master Playlist 指向二级列表
+		// Nested m3u8: Master Playlist points to a second-level list
 		if strings.Contains(line, ".m3u8") {
 			secURL := getFullUrl(line, host, baseURL)
 			secBody := getM3u8Body(secURL)
@@ -587,7 +618,7 @@ func getTsListInternal(body string, baseURL *url.URL, hostType string, index *in
 	return
 }
 
-// fetchKey 拉取 AES 密钥内容（主地址失败时回退备用地址）
+// fetchKey fetches the AES key content (falls back to the alternate URL on failure).
 func fetchKey(url, altURL string) (string, bool) {
 	for _, u := range []string{url, altURL} {
 		if u == "" {
@@ -604,19 +635,21 @@ func fetchKey(url, altURL string) (string, bool) {
 	return "", false
 }
 
-// TsInfo 用于保存 ts 文件的下载地址和文件名
-// 【合并 ycq3/bkkkd】增加 Key 字段：每个 ts 可携带独立的 AES 密钥（嵌套 m3u8 不同片段可用不同 key）
+// TsInfo holds the download URL and filename of a ts file.
+// [merged ycq3/bkkkd] Added Key field: each ts can carry its own AES key (different
+// segments in nested m3u8 may use different keys).
 type TsInfo struct {
 	Name   string
 	Url    string
-	AltUrl string // 【合并 0penMax】-ht=auto 时的备用 host 重试地址
+	AltUrl string // [merged 0penMax] alternate host retry URL when -ht=auto
 	Key    string
 }
 
-// downloader m3u8 下载器，使用信号量限制并发数
-// 【合并 wangguanyuan】进度条带实时网速；计数使用原子变量保证并发安全
+// downloader downloads the m3u8 segments, limiting concurrency with a semaphore.
+// [merged wangguanyuan] Progress bar shows real-time speed; counters use atomic
+// variables for concurrency safety.
 func downloader(tsList []TsInfo, maxGoroutines int, downloadDir string) {
-	isTTY := isTerminal(os.Stdout) && !opts.jsonOut // JSON 模式或非 TTY 不画进度条
+	isTTY := isTerminal(os.Stdout) && !opts.jsonOut // JSON mode or non-TTY: no progress bar
 	tsLen := len(tsList)
 	if tsLen == 0 {
 		return
@@ -650,7 +683,8 @@ func downloader(tsList []TsInfo, maxGoroutines int, downloadDir string) {
 	}
 }
 
-// isTerminal 判断 stdout 是否为 TTY（用于决定是否渲染进度条）。
+// isTerminal reports whether stdout is a TTY (used to decide whether to render
+// the progress bar).
 func isTerminal(f *os.File) bool {
 	fi, err := f.Stat()
 	if err != nil {
@@ -662,22 +696,23 @@ func isTerminal(f *os.File) bool {
 	return false
 }
 
-// downloadTsFile 下载并落地单个 ts 片段，失败时按 主host → 备用host → 重试 的顺序尝试
+// downloadTsFile downloads and lands a single ts segment, trying in the order:
+// primary host -> alternate host -> retries on failure.
 func downloadTsFile(ts TsInfo, downloadDir string) bool {
 	currPath := filepath.Join(downloadDir, ts.Name)
 	if exists, _ := pathExists(currPath); exists {
 		return true
 	}
 
-	// 主 host 一次尝试
+	// One attempt on the primary host
 	if tryDownload(ts.Url, ts.Key, currPath) {
 		return true
 	}
-	// 备用 host（自动降级）
+	// Alternate host (automatic fallback)
 	if ts.AltUrl != "" && ts.AltUrl != ts.Url && tryDownload(ts.AltUrl, ts.Key, currPath) {
 		return true
 	}
-	// 主 host 剩余重试（403 等永久失败不会进入重试）
+	// Remaining retries on the primary host (permanent failures like 403 won't retry)
 	for i := 1; i < TS_DOWNLOAD_RETRY; i++ {
 		if tryDownload(ts.Url, ts.Key, currPath) {
 			return true
@@ -686,7 +721,7 @@ func downloadTsFile(ts TsInfo, downloadDir string) bool {
 	return false
 }
 
-// tryDownload 执行一次下载尝试，返回是否成功
+// tryDownload performs one download attempt and returns whether it succeeded.
 func tryDownload(rawURL, key, currPath string) bool {
 	res := get(rawURL)
 	if res.StatusCode < 200 || res.StatusCode >= 400 {
@@ -698,9 +733,10 @@ func tryDownload(rawURL, key, currPath string) bool {
 	return ok
 }
 
-// writeTSFromResponse 将响应体清洗后写入 currPath。
-// 通过 .part 临时文件落地：未加密时流式剥离 SyncByte，避免整体驻留内存；
-// 重试失败时 .part 会被清理，不会残留半成品污染正式文件。
+// writeTSFromResponse writes the cleaned response body to currPath.
+// It lands via a .part temp file: when unencrypted, SyncBytes are stripped
+// streaming-wise to avoid holding everything in memory; on retry failure the
+// .part is cleaned up so partial files never pollute the real one.
 func writeTSFromResponse(res *http.Response, key, currPath string) bool {
 	partPath := currPath + ".part"
 	out, err := os.Create(partPath)
@@ -714,14 +750,14 @@ func writeTSFromResponse(res *http.Response, key, currPath string) bool {
 	if err != nil || written == 0 {
 		return false
 	}
-	// 校验长度：Content-Length 可信时，短包判定为下载不完全
+	// Check length: when Content-Length is trustworthy, a short packet means incomplete
 	if cl := res.Header.Get("Content-Length"); cl != "" {
 		if want, _ := strconv.ParseInt(cl, 10, 64); want > 0 && written < want {
 			return false
 		}
 	}
 
-	// 解密 + 剥离开头杂质
+	// Decrypt + strip leading junk
 	var decErr error
 	if key != "" {
 		decErr = decryptFileTo(partPath, currPath, []byte(key))
@@ -731,7 +767,8 @@ func writeTSFromResponse(res *http.Response, key, currPath string) bool {
 	return decErr == nil
 }
 
-// decryptFileTo 解密 AES 片段（CBC），并剥离开头 SyncByte 杂质后写入目标文件
+// decryptFileTo decrypts an AES segment (CBC) and writes it to the target file
+// after stripping leading SyncByte junk.
 func decryptFileTo(srcPath, dstPath string, key []byte) error {
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
@@ -744,8 +781,9 @@ func decryptFileTo(srcPath, dstPath string, key []byte) error {
 	return os.WriteFile(dstPath, stripLeadingJunk(plain), 0o666)
 }
 
-// stripLeadingJunkFile 流式剥离开头 SyncByte 0x47 前的杂质字节后写入目标文件
-// 【modify: 2020-08-13 修复ts格式SyncByte合并不能播放问题】
+// stripLeadingJunkFile streams the file into the target while stripping junk
+// bytes before the leading SyncByte 0x47.
+// [modify: 2020-08-13 fixed the unplayable issue when merging ts with SyncByte]
 func stripLeadingJunkFile(srcPath, dstPath string) error {
 	in, err := os.Open(srcPath)
 	if err != nil {
@@ -783,7 +821,8 @@ func stripLeadingJunkFile(srcPath, dstPath string) error {
 	}
 }
 
-// stripLeadingJunk 返回去除首个 SyncByte 之前杂质字节后的切片（内存版本，用于解密路径）
+// stripLeadingJunk returns a slice with leading junk before the first SyncByte
+// removed (in-memory version, used on the decryption path).
 func stripLeadingJunk(data []byte) []byte {
 	for i, b := range data {
 		if b == SYNC_BYTE {
@@ -793,7 +832,7 @@ func stripLeadingJunk(data []byte) []byte {
 	return data
 }
 
-// fileSizeOf 获取文件字节数（用于速度统计）
+// fileSizeOf returns the byte size of a file (used for speed stats).
 func fileSizeOf(path string) int64 {
 	if info, err := os.Stat(path); err == nil {
 		return info.Size()
@@ -801,8 +840,8 @@ func fileSizeOf(path string) int64 {
 	return 0
 }
 
-// checkTsDownDir 逐个校验 ts 片段，返回缺失文件列表
-// 【合并 nilarcs】失败片段保留目录以便断点续传
+// checkTsDownDir verifies each ts segment and returns the list of missing files.
+// [merged nilarcs] Failed segments keep the directory for resume from breakpoint.
 func checkTsDownDir(dir string, expected int) (missing []string) {
 	for i := 0; i < expected; i++ {
 		name := fmt.Sprintf(TS_NAME_TEMPLATE, i+1)
@@ -813,8 +852,8 @@ func checkTsDownDir(dir string, expected int) (missing []string) {
 	return
 }
 
-// dirHasTs 宽松校验：目录中存在至少一个 ts 文件
-// 【合并 vjsdhyygy】用于广告去重后（序号可能有空洞）的最终校验
+// dirHasTs loosely verifies that the directory contains at least one ts file.
+// [merged vjsdhyygy] Used as the final check after ad dedup (indices may have gaps).
 func dirHasTs(dir string) bool {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -828,8 +867,8 @@ func dirHasTs(dir string) bool {
 	return false
 }
 
-// purgeAllDuplicates 广告切片暴力去重：只要 MD5 内容重复，全部物理删除
-// （合并自 vjsdhyygy/m3u8-downloader）
+// purgeAllDuplicates removes duplicate ad segments: any MD5-duplicate files are
+// all physically deleted (merged from vjsdhyygy/m3u8-downloader).
 func purgeAllDuplicates(downloadDir string) {
 	logger.Printf("[校验] 正在扫描重复/广告切片...")
 	hashCount := make(map[string]int)
@@ -866,8 +905,8 @@ func purgeAllDuplicates(downloadDir string) {
 	logger.Printf("[净化完成] 共剔除 %d 个异常切片。", delCount)
 }
 
-// mergeWithFFmpeg 调用系统 ffmpeg 执行 concat 无损合并
-// （合并自 vjsdhyygy/m3u8-downloader）
+// mergeWithFFmpeg calls system ffmpeg to do a lossless concat merge.
+// (merged from vjsdhyygy/m3u8-downloader)
 func mergeWithFFmpeg(downloadDir, movieName, savePath string) string {
 	listPath := filepath.Join(downloadDir, "filelist.txt")
 	listFile, err := os.Create(listPath)
@@ -890,7 +929,7 @@ func mergeWithFFmpeg(downloadDir, movieName, savePath string) string {
 	}
 
 	outputMp4 := filepath.Join(savePath, movieName+".mp4")
-	// -fflags +genpts 重新生成时间戳，解决删除广告后的音画同步问题
+	// -fflags +genpts regenerates timestamps, fixing A/V sync after removing ads
 	cmd := exec.Command("ffmpeg", "-f", "concat", "-safe", "0",
 		"-i", listPath, "-c", "copy", "-fflags", "+genpts", "-y", outputMp4)
 	var errOut bytes.Buffer
@@ -902,8 +941,8 @@ func mergeWithFFmpeg(downloadDir, movieName, savePath string) string {
 	return outputMp4
 }
 
-// mergeTs 合并ts文件（内置回退方案：io.Copy 流式合并）
-// 【合并 nilarcs】按已知序号 1..n 顺序合并，保证片段顺序正确
+// mergeTs merges the ts files (built-in fallback: streaming merge via io.Copy).
+// [merged nilarcs] Merges in known order 1..n to guarantee segment ordering.
 func mergeTs(downloadDir string, expected int) string {
 	mvName := downloadDir + ".mp4"
 	outMv, err := os.Create(mvName)
@@ -914,7 +953,7 @@ func mergeTs(downloadDir string, expected int) string {
 	for i := 0; i < expected; i++ {
 		path := filepath.Join(downloadDir, fmt.Sprintf(TS_NAME_TEMPLATE, i+1))
 		if exists, _ := pathExists(path); !exists {
-			continue // 缺失片段跳过（已由 checkTsDownDir 提示）
+			continue // skip missing segments (already flagged by checkTsDownDir)
 		}
 		in, err := os.Open(path)
 		if err != nil {
@@ -927,8 +966,8 @@ func mergeTs(downloadDir string, expected int) string {
 	return mvName
 }
 
-// DrawProgressBarWithSpeed 进度条（下载阶段带实时网速）
-// 【合并 wangguanyuan】额外显示 x/y 计数与 MB/s 速度
+// DrawProgressBarWithSpeed renders the progress bar (with real-time speed during
+// the download phase). [merged wangguanyuan] Additionally shows x/y count and MB/s.
 func DrawProgressBarWithSpeed(prefix string, proportion float32, done, total int, totalBytes int64, startTs time.Time) {
 	width := PROGRESS_WIDTH
 	pos := int(proportion * float32(width))
@@ -941,7 +980,7 @@ func DrawProgressBarWithSpeed(prefix string, proportion float32, done, total int
 	fmt.Print(s)
 }
 
-// DrawProgressBar 进度条（合并阶段简单版）
+// DrawProgressBar renders a simple progress bar (merge phase version).
 func DrawProgressBar(prefix string, proportion float32, width int, suffix ...string) {
 	pos := int(proportion * float32(width))
 	s := fmt.Sprintf("[%s] %s%*s %6.2f%% \t%s",
@@ -949,8 +988,8 @@ func DrawProgressBar(prefix string, proportion float32, width int, suffix ...str
 	fmt.Print("\r" + s)
 }
 
-// ============================== 文件工具 ==============================
-// pathExists 判断文件或目录是否存在
+// ============================== File utilities ==============================
+// pathExists reports whether a file or directory exists.
 func pathExists(path string) (bool, error) {
 	_, err := os.Stat(path)
 	if err == nil {
@@ -962,8 +1001,9 @@ func pathExists(path string) (bool, error) {
 	return false, err
 }
 
-// ============================== 加解密相关 ==============================
-// PKCS7UnPadding 去除 PKCS7 填充（含空数据与非法填充防御）
+// ============================== Encryption helpers ==============================
+// PKCS7UnPadding removes PKCS7 padding (with guards against empty data and
+// invalid padding).
 func PKCS7UnPadding(origData []byte) []byte {
 	length := len(origData)
 	if length == 0 {
@@ -976,8 +1016,10 @@ func PKCS7UnPadding(origData []byte) []byte {
 	return origData[:(length - unpadding)]
 }
 
-// AesDecrypt AES-CBC 解密；IV 缺省时复用 key 前 16 字节（与 m3u8 标准一致）
-// 【合并 Orochi-Adde】密度校验：密文过短或非区块整数倍则直接报错，避免 CryptBlocks panic
+// AesDecrypt does AES-CBC decryption; when IV is absent it reuses the first 16
+// bytes of the key (consistent with the m3u8 standard).
+// [merged Orochi-Adde] Length validation: errors on ciphertext that is too short
+// or not a multiple of the block size to avoid CryptBlocks panics.
 func AesDecrypt(crypted, key []byte, ivs ...[]byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
