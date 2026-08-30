@@ -420,7 +420,10 @@ func processOne(m3u8Url, movieName string, maxGoroutines int, hostType, pwd stri
 	}
 	downloadDir := filepath.Join(pwd, movieName)
 	if isExist, _ := pathExists(downloadDir); !isExist {
-		os.MkdirAll(downloadDir, os.ModePerm)
+		if err := os.MkdirAll(downloadDir, os.ModePerm); err != nil {
+			logger.Printf("[Error] 创建下载目录失败: %v", err)
+			return ""
+		}
 	}
 	m3u8Body := getM3u8Body(m3u8URL.String())
 	tsList := getTsList(m3u8Body, m3u8URL, hostType)
@@ -916,14 +919,22 @@ func mergeWithFFmpeg(downloadDir, movieName, savePath string) string {
 
 	hasTs := false
 	entries, _ := os.ReadDir(downloadDir)
+	var writeErr error
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".ts") {
 			continue
 		}
-		listFile.WriteString(fmt.Sprintf("file '%s'\n", e.Name()))
+		if _, err := fmt.Fprintf(listFile, "file '%s'\n", e.Name()); err != nil {
+			writeErr = err
+			break
+		}
 		hasTs = true
 	}
 	listFile.Close()
+	if writeErr != nil {
+		logger.Printf("[Error] 写入 filelist 失败: %v", writeErr)
+		return ""
+	}
 	if !hasTs {
 		return ""
 	}
