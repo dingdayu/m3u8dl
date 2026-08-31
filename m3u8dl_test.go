@@ -390,6 +390,67 @@ func TestAlternatePartialNeverSeedsPrimaryResume(t *testing.T) {
 	}
 }
 
+// A 206 that is missing Content-Range or starts at an unexpected offset is a
+// tail, not the resource: the client must discard it and re-fetch from byte
+// zero instead of finalizing the tail as the whole segment.
+func TestRangeResumeRejectsUnusable206(t *testing.T) {
+	withRestoredGlobals(t)
+	data := resumeBody(50000)
+	total := int64(len(data))
+
+	cases := map[string]func(w http.ResponseWriter, start int64){
+		"missing Content-Range": func(w http.ResponseWriter, start int64) {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", total-start))
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(data[start:])
+		},
+		"mismatched start": func(w http.ResponseWriter, start int64) {
+			w.Header().Set("Content-Range",
+				fmt.Sprintf("bytes 10000-%d/%d", total-1, total))
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", total-10000))
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(data[10000:])
+		},
+	}
+	for name, serve206 := range cases {
+		t.Run(name, func(t *testing.T) {
+			withRestoredGlobals(t)
+			srv := httptest.NewServer(http.HandlerFunc(
+				func(w http.ResponseWriter, r *http.Request) {
+					if rg := r.Header.Get("Range"); rg != "" {
+						var start int64
+						if _, err := fmt.Sscanf(rg, "bytes=%d-", &start); err != nil {
+							http.Error(w, "bad range", http.StatusBadRequest)
+							return
+						}
+						serve206(w, start)
+						return
+					}
+					w.Header().Set("Content-Length", fmt.Sprintf("%d", total))
+					_, _ = w.Write(data)
+				}))
+			defer srv.Close()
+
+			dir := t.TempDir()
+			curr := filepath.Join(dir, "00001.ts")
+			if err := os.WriteFile(curr+".part", data[:20000], 0o666); err != nil {
+				t.Fatal(err)
+			}
+
+			if !tryDownload(srv.URL+"/00001.ts", "", curr) {
+				t.Fatal("client must re-fetch from byte zero and complete")
+			}
+			got, err := os.ReadFile(curr)
+			if err != nil {
+				t.Fatalf("read finalized segment: %v", err)
+			}
+			if !bytes.Equal(got, data) {
+				t.Fatal("finalized content differs from the served body")
+			}
+		})
+	}
+}
+
 func TestThrottleReadsPacesThroughput(t *testing.T) {
 	withRestoredGlobals(t)
 	rateLimiter = rate.NewLimiter(rate.Limit(200*1024), maxBurstBytes)

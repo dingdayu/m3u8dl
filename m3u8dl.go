@@ -1146,6 +1146,14 @@ func tryDownload(rawURL, key, currPath string) bool {
 	} else {
 		res = get(rawURL)
 	}
+	if res.StatusCode == http.StatusPartialContent && !usableRangeStart(res, resumeFrom) {
+		// A 206 whose Content-Range is missing/garbled, or starts at neither
+		// our resume offset (append) nor byte zero (safe restart), is a tail
+		// — not the resource. Re-fetch without Range instead of splicing it.
+		res.Body.Close()
+		resumeFrom = 0
+		res = get(rawURL)
+	}
 	if res.StatusCode < 200 || res.StatusCode >= 400 {
 		res.Body.Close()
 		return false
@@ -1153,6 +1161,14 @@ func tryDownload(rawURL, key, currPath string) bool {
 	ok := writeTSFromResponse(res, key, currPath, resumeFrom)
 	res.Body.Close()
 	return ok
+}
+
+// usableRangeStart reports whether a 206 response is consumable: its
+// Content-Range must parse and start either at resumeFrom (append the tail)
+// or at zero (the body is the full resource, safe to restart from).
+func usableRangeStart(res *http.Response, resumeFrom int64) bool {
+	start, _, _, ok := parseContentRange(res.Header.Get("Content-Range"))
+	return ok && (start == resumeFrom || start == 0)
 }
 
 // parseContentRange parses an HTTP Content-Range value like
@@ -1201,6 +1217,11 @@ func writeTSFromResponse(res *http.Response, key, currPath string, resumeFrom in
 	seek := int64(0)
 	rangeTotal := int64(-1)
 	if res.StatusCode == http.StatusPartialContent {
+		if !usableRangeStart(res, resumeFrom) {
+			// The plain re-fetch still answered a broken 206: fail the
+			// attempt loudly instead of landing a tail as the segment.
+			return false
+		}
 		if start, _, total, ok := parseContentRange(res.Header.Get("Content-Range")); ok {
 			if start == resumeFrom {
 				seek = resumeFrom
