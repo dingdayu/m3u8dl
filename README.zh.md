@@ -127,28 +127,28 @@ gh release download v1.0.0 --repo dingdayu/m3u8dl --pattern 'm3u8dl_*_Linux_x86_
    ```
 
 2. **GitHub Artifact Attestations** — Release 的**归档文件**（`.tar.gz` /
-  `.zip`）带有 GitHub 官方构建证明，一条命令即可确认由本仓库的 release
-  工作流构建：
+   `.zip`）带有 GitHub 官方构建证明，一条命令即可确认由本仓库的 release
+   工作流构建：
 
    ```bash
    gh attestation verify m3u8dl_v1.0.0_Linux_x86_64.tar.gz --repo dingdayu/m3u8dl
    ```
 
 3. **独立二进制（npm / jsDelivr）** — 从 jsDelivr 直接下载（或从 npm 解出）
-  的裸二进制不属于 attested 产物。请对照随 Release 发布、且本身已 attest
-  的 `bin-checksums.txt` 进行校验：
+   的裸二进制不属于 attested 产物。请对照随 Release 发布、且本身已 attest
+   的 `bin-checksums.txt` 进行校验：
 
-  ```bash
-  curl -fSLO https://github.com/dingdayu/m3u8dl/releases/download/v1.0.0/bin-checksums.txt
-  sha256sum -c bin-checksums.txt --ignore-missing
-  # 可选：证明该清单确实来自本仓库的 release 构建：
-  gh attestation verify bin-checksums.txt --repo dingdayu/m3u8dl
-  ```
+```bash
+curl -fSLO https://github.com/dingdayu/m3u8dl/releases/download/v1.0.0/bin-checksums.txt
+sha256sum -c bin-checksums.txt --ignore-missing
+# 可选：证明该清单确实来自本仓库的 release 构建：
+gh attestation verify bin-checksums.txt --repo dingdayu/m3u8dl
+```
 
 4. **npm provenance 与自检** — npm 包发布时附带来源证明（见包页面的
-  provenance 徽章，或本地 `npm audit signatures`）。此外，`m3u8dl` 启动器
-  会在**每次运行时**将平台二进制的 SHA-256 与打包时记录的摘要比对，若
-  下载被损坏或篡改则明确报错并中止：
+   provenance 徽章，或本地 `npm audit signatures`）。此外，`m3u8dl` 启动器
+   会在**每次运行时**将平台二进制的 SHA-256 与打包时记录的摘要比对，若
+   下载被损坏或篡改则明确报错并中止：
 
    ```bash
    npm audit signatures
