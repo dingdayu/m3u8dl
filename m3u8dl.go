@@ -1109,6 +1109,10 @@ func downloadTsFile(ts TsInfo, downloadDir string) bool {
 			return true
 		}
 		if i == 0 && ts.AltUrl != "" && ts.AltUrl != ts.Url {
+			// The alternate URL is a different resolution candidate (v1/v2)
+			// and may be a different resource: never resume it from the
+			// primary's partial bytes, which would splice two resources.
+			os.Remove(currPath + ".part")
 			if tryDownload(ts.AltUrl, ts.Key, currPath) {
 				return true
 			}
