@@ -2,25 +2,26 @@
 
 A fast, multi-threaded **m3u8 video downloader** written in Go.
 
-This is the installable `m3u8dl` package. It pulls the platform-specific
-binary package for your OS/arch (`darwin-arm64`, `darwin-x64`, `linux-arm64`,
-`linux-x64` or `win32-x64`) as an optional dependency — npm downloads only the
-binary you need, and exposes it as the `m3u8dl` CLI.
+This is the installable `@dingdayu/m3u8dl` package. It pulls the
+platform-specific binary package for your OS/arch (`darwin-arm64`,
+`darwin-x64`, `linux-arm64`, `linux-x64` or `win32-x64`) as an optional
+dependency — npm downloads only the binary you need, and exposes it as the
+`m3u8dl` CLI.
 
 ## Install
 
 ```bash
-npm install -g m3u8dl
+npm install -g @dingdayu/m3u8dl
 ```
 
 Or run once without installing:
 
 ```bash
-npx m3u8dl --help
+npx @dingdayu/m3u8dl --help
 ```
 
 > In China, use the npmmirror registry for speed:
-> `npm install -g m3u8dl --registry=https://registry.npmmirror.com`
+> `npm install -g @dingdayu/m3u8dl --registry=https://registry.npmmirror.com`
 
 ## Usage
 

@@ -43,20 +43,20 @@ go install github.com/dingdayu/m3u8dl@latest
 
 ## Install (npm)
 
-`m3u8dl` is published to npm as a meta package that auto-selects the correct
-pre-built binary for darwin-arm64 / darwin-x64 / linux-arm64 / linux-x64 /
-win32-x64:
+`m3u8dl` is published to npm as `@dingdayu/m3u8dl`, a meta package that
+auto-selects the correct pre-built binary for darwin-arm64 / darwin-x64 /
+linux-arm64 / linux-x64 / win32-x64:
 
 ```bash
-npm install -g m3u8dl                    # global CLI
-npx m3u8dl --url <m3u8-url> --json       # one-shot
+npm install -g @dingdayu/m3u8dl                    # global CLI
+npx @dingdayu/m3u8dl --url <m3u8-url> --json       # one-shot
 # China mirror:
-npm install -g m3u8dl --registry=https://registry.npmmirror.com
+npm install -g @dingdayu/m3u8dl --registry=https://registry.npmmirror.com
 ```
 
 The platform binaries are also on jsDelivr:
-`https://cdn.jsdelivr.net/npm/m3u8dl-<platform>@<version>/bin/m3u8dl`
-(e.g. `m3u8dl-linux-x64`).
+`https://cdn.jsdelivr.net/npm/@dingdayu/m3u8dl-<platform>@<version>/bin/m3u8dl`
+(e.g. `@dingdayu/m3u8dl-linux-x64`).
 
 ## Verifying releases
 

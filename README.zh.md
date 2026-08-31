@@ -64,15 +64,16 @@ GitHub Release 在国内下载通常较慢。**推荐优先使用以下有大厂
 
 ### 方式一（推荐）：npm / npmmirror（阿里巴巴镜像）
 
-`m3u8dl` 已发布到 npm，自动按平台选择预编译二进制。npm 官方源在国内由
+`m3u8dl` 已发布到 npm（包名 [`@dingdayu/m3u8dl`](https://www.npmjs.com/package/@dingdayu/m3u8dl)），
+自动按平台选择预编译二进制。npm 官方源在国内由
 [npmmirror](https://npmmirror.com)（阿里巴巴维护）完整镜像，速度快且可信：
 
 ```bash
 # 全局安装（推荐，使用 npmmirror 镜像源）
-npm install -g m3u8dl --registry=https://registry.npmmirror.com
+npm install -g @dingdayu/m3u8dl --registry=https://registry.npmmirror.com
 
 # 或免安装直接运行
-npx m3u8dl --url https://example.com/index.m3u8 --json --registry=https://registry.npmmirror.com
+npx @dingdayu/m3u8dl --url https://example.com/index.m3u8 --json --registry=https://registry.npmmirror.com
 ```
 
 支持平台：`darwin-arm64`、`darwin-x64`、`linux-arm64`、`linux-x64`、`win32-x64`。
@@ -85,14 +86,15 @@ npm 包内的二进制文件同时由 [jsDelivr](https://www.jsdelivr.com/) 提�
 ```bash
 # 以 v1.0.0 为例，Linux x64：
 curl -fSL -o m3u8dl \
-  "https://cdn.jsdelivr.net/npm/m3u8dl-linux-x64@1.0.0/bin/m3u8dl"
+  "https://cdn.jsdelivr.net/npm/@dingdayu/m3u8dl-linux-x64@1.0.0/bin/m3u8dl"
 chmod +x m3u8dl
 sudo mv m3u8dl /usr/local/bin/
 m3u8dl --version
 ```
 
-各平台包名：`m3u8dl-darwin-arm64`、`m3u8dl-darwin-x64`、`m3u8dl-linux-arm64`、
-`m3u8dl-linux-x64`、`m3u8dl-win32-x64`（Windows 下二进制为 `bin/m3u8dl.exe`）。
+各平台包名：`@dingdayu/m3u8dl-darwin-arm64`、`@dingdayu/m3u8dl-darwin-x64`、
+`@dingdayu/m3u8dl-linux-arm64`、`@dingdayu/m3u8dl-linux-x64`、`@dingdayu/m3u8dl-win32-x64`
+（Windows 下二进制为 `bin/m3u8dl.exe`）。
 
 ### 方式三：go install + goproxy.cn（七牛云背书）
 
