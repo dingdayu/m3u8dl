@@ -60,83 +60,87 @@ make build          # 生成 ./bin/m3u8dl
 
 ## 国内加速下载
 
-GitHub Release 在国内下载通常较慢，推荐以下加速方式。
+GitHub Release 在国内下载通常较慢。**推荐优先使用以下有大厂背书、可验证的渠道**，而非来源不明的第三方 GitHub 加速代理。
 
-### 1. 使用 GitHub 加速镜像（无需登录）
+### 方式一（推荐）：npm / npmmirror（阿里巴巴镜像）
 
-将 Release 下载链接中的 `github.com` 替换为镜像域名，例如：
+`m3u8dl` 已发布到 npm，自动按平台选择预编译二进制。npm 官方源在国内由
+[npmmirror](https://npmmirror.com)（阿里巴巴维护）完整镜像，速度快且可信：
 
 ```bash
-# 镜像前缀（任选可用者）：
-#   https://ghproxy.net/            https://gh-proxy.com/
-#   https://ghfast.top/             https://mirror.ghproxy.com/
+# 全局安装（推荐，使用 npmmirror 镜像源）
+npm install -g m3u8dl --registry=https://registry.npmmirror.com
 
-m3u8dl --version   # 先获取最新版本号
-
-# 以 v1.0.0 为例，Linux amd64：
-curl -fSL -o m3u8dl \
-  "https://ghfast.top/https://github.com/dingdayu/m3u8dl/releases/download/v1.0.0/m3u8dl_v1.0.0_Linux_x86_64.tar.gz"
-
-tar -xzf m3u8dl_v1.0.0_Linux_x86_64.tar.gz
-chmod +x m3u8dl
-sudo mv m3u8dl /usr/local/bin/
+# 或免安装直接运行
+npx m3u8dl --url https://example.com/index.m3u8 --json --registry=https://registry.npmmirror.com
 ```
 
-> 镜像域名可能变动，请以当前可用者为准；`ghfast.top`、`ghproxy.net` 等均为社区维护的下载加速代理。
+支持平台：`darwin-arm64`、`darwin-x64`、`linux-arm64`、`linux-x64`、`win32-x64`。
 
-> 归档命名说明：Releases 上的档案按 `m3u8dl_<版本>_<OS>_<ARCH>.tar.gz`（Windows 为 `.zip`）
-> 命名，其中 `<OS>` 为 `Linux` / `Darwin` / `Windows`，amd64 写作 `x86_64`。
-> 例如 `m3u8dl_v1.0.0_Linux_x86_64.tar.gz`。
+### 方式二：jsDelivr CDN（Cloudflare/Fastly 背书）
 
-### 2. 使用 `gh` CLI 与 GitHub 官方加速（`ghproxy`）
+npm 包内的二进制文件同时由 [jsDelivr](https://www.jsdelivr.com/) 提供 CDN
+分发。可直接从 jsDelivr 下载对应平台的二进制：
 
-若已登录 GitHub 并安装 [gh](https://cli.github.com)，直接用 gh 下载（走官方 API，相对稳定）：
+```bash
+# 以 v1.0.0 为例，Linux x64：
+curl -fSL -o m3u8dl \
+  "https://cdn.jsdelivr.net/npm/m3u8dl-linux-x64@1.0.0/bin/m3u8dl"
+chmod +x m3u8dl
+sudo mv m3u8dl /usr/local/bin/
+m3u8dl --version
+```
+
+各平台包名：`m3u8dl-darwin-arm64`、`m3u8dl-darwin-x64`、`m3u8dl-linux-arm64`、
+`m3u8dl-linux-x64`、`m3u8dl-win32-x64`（Windows 下二进制为 `bin/m3u8dl.exe`）。
+
+### 方式三：go install + goproxy.cn（七牛云背书）
+
+源码构建可通过 [goproxy.cn](https://goproxy.cn)（七牛云维护）加速模块下载：
+
+```bash
+GOPROXY=https://goproxy.cn,direct go install github.com/dingdayu/m3u8dl@latest
+```
+
+### 方式四：gh CLI 官方 API
+
+若已登录 GitHub 并安装 [gh](https://cli.github.com)，可直接走官方 API 下载（相对稳定）：
 
 ```bash
 gh release download v1.0.0 --repo dingdayu/m3u8dl --pattern 'm3u8dl_*_Linux_x86_64.tar.gz'
 ```
 
-### 3. 一键脚本示例（Linux/macOS, amd64/arm64）
+> ⚠️ **关于第三方 GitHub 加速代理**（如各类 ghproxy/ghfast 镜像站）：这些服务
+> 由匿名个人/社区维护，**无法保证文件未被篡改**。如确需使用，请务必按下方
+> 「验证下载」一节完成签名校验。
 
-```bash
-#!/usr/bin/env bash
-# 安装 m3u8dl 最新版（含国内镜像加速）
-set -euo pipefail
-VERSION="${1:-latest}"
-ARCH="$(uname -m)"
-case "$(uname -s)" in
-  Linux)  OS="Linux" ;;
-  Darwin) OS="Darwin" ;;
-  *) echo "Unsupported OS"; exit 1 ;;
-esac
-case "$ARCH" in
-  x86_64) GOARCH="amd64" ;;
-  arm64)  GOARCH="arm64" ;;
-  *) echo "Unsupported arch: $ARCH"; exit 1 ;;
-esac
-# goarch of the target machine -> archive arch segment in upload name
-case "$GOARCH" in
-  amd64) ARCH_SEG="x86_64" ;;
-  arm64) ARCH_SEG="arm64" ;;
-esac
+### 验证下载（强烈建议）
 
-if [ "$VERSION" = "latest" ]; then
-  VERSION=$(curl -fsSL https://api.github.com/repos/dingdayu/m3u8dl/releases/latest | grep '"tag_name"' | head -1 | sed 's/.*"v\(.*\)",/\1/')
-fi
+无论通过哪种渠道下载，发布产物均带有以下可验证信息：
 
-# 镜像前缀：需可访问 GitHub，可直接写 https://github.com
-MIRROR="https://ghfast.top"
-URL="$MIRROR/https://github.com/dingdayu/m3u8dl/releases/download/v${VERSION}/m3u8dl_v${VERSION}_${OS}_${ARCH_SEG}.tar.gz"
+1. **SHA-256 校验和** — 每个 Release 附带 `checksums.txt`：
 
-echo "Downloading m3u8dl v${VERSION} (${OS}/${GOARCH}) ..."
-TMP=$(mktemp -d)
-curl -fSL -o "$TMP/m3u8dl.tar.gz" "$URL"
-tar -xzf "$TMP/m3u8dl.tar.gz" -C "$TMP"
-sudo mv "$TMP/m3u8dl" /usr/local/bin/m3u8dl
-rm -rf "$TMP"
-m3u8dl --version
-echo "Installed: /usr/local/bin/m3u8dl"
-```
+   ```bash
+   sha256sum -c checksums.txt --ignore-missing
+   ```
+
+2. **GitHub Artifact Attestations** — 归档文件带有 GitHub 官方构建证明，
+   一条命令即可确认由本仓库的 release 工作流构建：
+
+   ```bash
+   gh attestation verify m3u8dl_v1.0.0_Linux_x86_64.tar.gz --repo dingdayu/m3u8dl
+   ```
+
+3. **npm provenance** — npm 包发布时附带来源证明，可在包页面查看
+   provenance 徽章，或本地审计：
+
+   ```bash
+   npm audit signatures
+   ```
+
+> 归档命名说明：Releases 上的档案按 `m3u8dl_<版本>_<OS>_<ARCH>.tar.gz`（Windows 为 `.zip`）
+> 命名，其中 `<OS>` 为 `Linux` / `Darwin` / `Windows`，amd64 写作 `x86_64`。
+> 例如 `m3u8dl_v1.0.0_Linux_x86_64.tar.gz`。
 
 ---
 
