@@ -16,6 +16,9 @@ jobs:
   goreleaser:
     name: Release binaries
     runs-on: ubuntu-latest
+    env:
+      # Set to 'true' when the NPM_TOKEN secret is configured; checked below.
+      NPM_TOKEN_SET: ${{ vars.NPM_PUBLISH_ENABLED == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -30,6 +33,12 @@ jobs:
       - name: Fetch dependencies
         run: go mod download
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.x"
+          registry-url: "https://registry.npmjs.org"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
@@ -38,6 +47,9 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pack npm packages
+        run: scripts/npm-pack.sh "${GITHUB_REF_NAME#v}"
 
       - name: Attest archive artifacts (.tar.gz / .zip)
         uses: actions/attest@v4
@@ -50,3 +62,9 @@ jobs:
         uses: actions/attest@v4
         with:
           subject-path: dist/checksums.txt
+
+      - name: Publish to npm
+        if: ${{ env.NPM_TOKEN_SET == 'true' }}
+        run: scripts/npm-publish.sh "${GITHUB_REF_NAME#v}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
