@@ -1197,9 +1197,13 @@ func writeTSFromResponse(res *http.Response, key, currPath string, resumeFrom in
 	// Only continue an existing .part when the server truly honoured our
 	// Range (206 whose start offset equals the bytes we already have).
 	seek := int64(0)
+	rangeTotal := int64(-1)
 	if res.StatusCode == http.StatusPartialContent {
-		if start, _, _, ok := parseContentRange(res.Header.Get("Content-Range")); ok && start == resumeFrom {
-			seek = resumeFrom
+		if start, _, total, ok := parseContentRange(res.Header.Get("Content-Range")); ok {
+			if start == resumeFrom {
+				seek = resumeFrom
+			}
+			rangeTotal = total
 		}
 	}
 
@@ -1234,6 +1238,12 @@ func writeTSFromResponse(res *http.Response, key, currPath string, resumeFrom in
 		if body, _ := strconv.ParseInt(cl, 10, 64); body > 0 {
 			want = seek + body
 		}
+	}
+	// A server may cap a 206 to a subrange (e.g. bytes 100-199/1000): only
+	// finalize once the accumulated .part reaches the advertised total,
+	// otherwise keep it so the next attempt resumes the missing tail.
+	if rangeTotal > want {
+		want = rangeTotal
 	}
 	if got := fileSizeOf(partPath); got < want {
 		return false
