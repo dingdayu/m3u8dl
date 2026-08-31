@@ -13,12 +13,31 @@ permissions:
   attestations: write
 
 jobs:
+  # Detect whether the npm channel is configured, purely from the presence of
+  # the NPM_TOKEN secret (no repo variable to keep in sync). Secrets cannot be
+  # read in step-level `if:` conditions, so this check runs in its own job.
+  npm-config:
+    name: Check npm publish configuration
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - name: Detect NPM_TOKEN
+        id: check
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [[ -n "${NPM_TOKEN:-}" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::NPM_TOKEN secret not set — skipping the npm channel for this release."
+          fi
+
   goreleaser:
     name: Release binaries
     runs-on: ubuntu-latest
-    env:
-      # Set to 'true' when the NPM_TOKEN secret is configured; checked below.
-      NPM_TOKEN_SET: ${{ vars.NPM_PUBLISH_ENABLED == 'true' }}
+    needs: npm-config
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -39,17 +58,35 @@ jobs:
           node-version: "22.x"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Run GoReleaser
+      # Snapshot build (no publish) to produce the dist/ binaries, then pack
+      # the npm tarballs before the real release so a packaging failure aborts
+      # the release instead of leaving a half-published tag.
+      - name: Build binaries (goreleaser snapshot)
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: latest
-          args: release --clean
+          args: release --snapshot --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Record raw-binary checksums (bin-checksums.txt)
+        run: scripts/bin-checksums.sh
+
+      - name: Upload bin-checksums.txt to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/bin-checksums.txt --clobber
+
       - name: Pack npm packages
+        if: needs.npm-config.outputs.enabled == 'true'
         run: scripts/npm-pack.sh "${GITHUB_REF_NAME#v}"
+
+      - name: Publish to npm
+        if: needs.npm-config.outputs.enabled == 'true'
+        run: scripts/npm-publish.sh "${GITHUB_REF_NAME#v}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Attest archive artifacts (.tar.gz / .zip)
         uses: actions/attest@v4
@@ -58,13 +95,20 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
 
-      - name: Attest checksums
+      - name: Attest checksums (archives + raw binaries)
         uses: actions/attest@v4
         with:
-          subject-path: dist/checksums.txt
+          subject-path: |
+            dist/checksums.txt
+            dist/bin-checksums.txt
 
-      - name: Publish to npm
-        if: ${{ env.NPM_TOKEN_SET == 'true' }}
-        run: scripts/npm-publish.sh "${GITHUB_REF_NAME#v}"
+      # The real release publishes the same binaries; dist/ (incl. the staged
+      # npm tarballs) is left untouched.
+      - name: Run GoReleaser (publish GitHub release)
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
