@@ -1,6 +1,6 @@
 # AGENTS.md
 
-**This file is for developer agents (and contributing humans) working *on* the
+**This file is for developer agents (and contributing humans) working _on_ the
 m3u8dl codebase.** Read it before writing or changing code here.
 
 > 📌 Role split: if you are using the tool (installing, downloading with it),
@@ -29,20 +29,21 @@ everything into a single `.mp4` using `ffmpeg` (with a built-in fallback).
 make build        # lint + build to ./bin/m3u8dl
 make test         # run go test
 make lint         # run golangci-lint
-make install-hooks  # install git hooks (core.hooksPath -> .hooks)
+make install-hooks  # install git hooks via lefthook
+make hooks-run    # run all hooks on all files (like CI)
 make release      # run goreleaser release
 ```
 
-After cloning, run `make install-hooks` (or `.hooks/install.sh`) once. This
-sets `core.hooksPath` so the version-controlled hooks under `.hooks/` run on
-every local commit:
+After cloning, run `make install-hooks` once. This installs
+[Lefthook](https://lefthook.dev) (a single Go binary) and sets up the
+repository hooks:
 
-- `pre-commit` — `gofmt` + `go vet` + EOF-newline / trailing-whitespace /
-  LF enforcement (auto-fixes where possible).
-- `commit-msg` — enforces Conventional Commits. Bypass with `SKIP=1 git commit ...`.
+- `pre-commit` — `gofmt` + `go vet` + file hygiene (LF, EOF newline,
+  trailing-whitespace) + YAML/JSON validation + large-file checks.
+- `commit-msg` — enforces Conventional Commits.
 
-For editor-agnostic consistency also enable the optional `pre-commit` framework
-(`.pre-commit-config.yaml`) and rely on `.gitattributes` / `.editorconfig`.
+Bypass hooks temporarily with `git commit --no-verify` or `LEFTHOOK=0 git
+commit ...` (do not leave bypassed).
 
 ## Documentation languages
 
@@ -70,11 +71,11 @@ Follow this loop for any code change so PRs land clean and reviewable:
 2. **Write the change** — keep it minimal and aligned with the conventions
    above: English comments, single-file/single-package, atomic concurrency.
 3. **Format & verify** — run `make build` (runs gofmt + go vet + build). Before
-   committing, ensure `make style-check` passes (EOF newline, no trailing
-   whitespace, LF line endings).
+   committing, ensure `make hooks-run` passes (all file hygiene checks,
+   formatting, and linting).
 4. **Commit with a Conventional Commits message** — the `commit-msg` hook
    enforces this. Prefix: `feat|fix|docs|style|refactor|perf|test|chore|ci|build`.
-   Bypass a hook temporarily with `SKIP=1 git commit ...` (do not leave bypassed).
+   Bypass hooks temporarily with `git commit --no-verify` (do not leave bypassed).
 5. **Open a PR against `main`** using `.github/PULL_REQUEST_TEMPLATE.md`.
    CI (`ci.yml`) runs gofmt, `go vet`, golangci-lint, tests, and cross-OS builds.
 
@@ -90,7 +91,7 @@ and revert.
   exact files/lines of one change. Do not sweep in incidental
   formatting/whitespace/refactor noise in the same commit.
 - **Every commit leaves the tree working** — each commit should build and pass
-  `make style-check` / `go vet`, so any intermediate commit can be checked out or
+  `make hooks-run` / `go vet`, so any intermediate commit can be checked out or
   bisected safely, and reverted without collateral damage.
 - **Scoped, descriptive subject** — each message's `<scope>`/body reflects exactly
   that one change, understandable in isolation.
@@ -105,7 +106,7 @@ and revert.
 
 ## Open-Source Collaboration & Code Review
 
-- Be kind and specific in reviews; explain *why*, suggest concrete improvements.
+- Be kind and specific in reviews; explain _why_, suggest concrete improvements.
 - Respect the [CONTRIBUTING.md](CONTRIBUTING.md) guidelines and the
   [Contributor Covenant](CODE_OF_CONDUCT.md).
 - Keep PRs small and single-purpose; rebase on `main` and resolve locally.

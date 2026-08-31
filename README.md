@@ -138,13 +138,20 @@ choose the resolution strategy:
 With `--json`, all results are printed to **stdout** as a single JSON object:
 
 ```json
-{"ok":true,"path":"/data/videos/movie.mp4","duration_sec":12.34,"url":"https://...","name":"movie","mode":"single"}
+{
+  "ok": true,
+  "path": "/data/videos/movie.mp4",
+  "duration_sec": 12.34,
+  "url": "https://...",
+  "name": "movie",
+  "mode": "single"
+}
 ```
 
 On failure:
 
 ```json
-{"ok":false,"error":"download failed ...","mode":"single"}
+{ "ok": false, "error": "download failed ...", "mode": "single" }
 ```
 
 Logs, progress and warnings go to **stderr**, so you can safely parse only the
@@ -181,22 +188,20 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines, and
 make build       # build to ./bin/m3u8dl
 make test        # run tests
 make lint        # run golangci-lint
-make install-hooks   # install git hooks (style/format/conventional-commits)
+make install-hooks   # install git hooks via lefthook
 make release     # run goreleaser (requires goreleaser installed)
 ```
 
 ### Git hooks & editor-agnostic style
 
-This repo ships commit hooks and style tooling so the codebase stays clean no
-matter which editor/OS contributors use (EOF newlines, trailing whitespace,
-mixed line endings, Go formatting, commit-message conventions):
+This repo uses [Lefthook](https://lefthook.dev) (a single Go binary) to manage
+git hooks, ensuring consistent code style regardless of editor/OS:
 
-- `make install-hooks` → sets `core.hooksPath` to `.hooks/`
-    - `.hooks/pre-commit` — checks/fixes `gofmt`, `go vet`, EOF newline,
-        trailing whitespace, LF line endings
-    - `.hooks/commit-msg` — enforces [Conventional Commits](CONTRIBUTING.md#commit-messages)
-- Optional `pre-commit` framework (`.pre-commit-config.yaml`) with
-    `end-of-file-fixer`, `trailing-whitespace`, `check-yaml`, `check-json`, …
+- `make install-hooks` → installs lefthook and sets up `pre-commit` + `commit-msg` hooks
+  - `pre-commit` — checks/fixes `gofmt`, `go vet`, EOF newline,
+    trailing whitespace, LF line endings, YAML/JSON validation, large-file checks
+  - `commit-msg` — enforces [Conventional Commits](CONTRIBUTING.md#commit-messages)
+- `lefthook.yml` — hook configuration (parallel execution, auto-stage fixes)
 - `.gitattributes` — forces LF, declares text/binary, helps GitHub Linguist
 - `.editorconfig` — editor-agnostic indent/encoding/eol defaults
 

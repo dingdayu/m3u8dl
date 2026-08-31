@@ -1,0 +1,162 @@
+# lefthook.yml — Git hooks for m3u8dl
+#
+# Install:   make install-hooks   (or: lefthook install)
+# Run all:   make hooks-run       (or: lefthook run pre-commit --all-files)
+# Bypass:    git commit --no-verify   (or: LEFTHOOK=0 git commit ...)
+#
+# Docs: https://lefthook.dev
+
+# Auto-stage fixed files after successful hook execution
+auto_stage: "on_success"
+
+pre-commit:
+  # Run jobs in parallel for speed
+  parallel: true
+
+  jobs:
+    # 1. Go formatting
+    - name: gofmt
+      glob: "*.go"
+      run: gofmt -l .
+      # Auto-fix if check fails
+      fix: gofmt -w .
+
+    # 2. Go vet
+    - name: go vet
+      glob: "*.go"
+      run: go vet ./...
+
+    # 3. File hygiene (LF, EOF newline, no trailing whitespace)
+    #    Uses git's built-in checks + sed for auto-fix
+    - name: file hygiene
+      run: |
+        set -e
+        # Check for CRLF line endings and fix
+        for f in {staged_files}; do
+          [ -f "$f" ] || continue
+          # Skip binary files
+          if file "$f" | grep -q binary; then continue; fi
+          # Convert CRLF to LF if needed
+          if grep -q $'\r\n' "$f" 2>/dev/null; then
+            sed -i 's/\r\n/\n/g' "$f"
+            echo "fixed CRLF: $f"
+          fi
+          # Remove trailing whitespace
+          if grep -qE ' +$|\t+$' "$f" 2>/dev/null; then
+            sed -i 's/[[:space:]]*$//' "$f"
+            echo "fixed trailing-whitespace: $f"
+          fi
+          # Ensure EOF newline
+          if [ -n "$(tail -c 1 "$f" 2>/dev/null)" ]; then
+            echo "" >> "$f"
+            echo "fixed EOF-newline: $f"
+          fi
+        done
+
+    # 4. Check for large files (>2MB)
+    - name: check large files
+      run: |
+        for f in {staged_files}; do
+          [ -f "$f" ] || continue
+          size=$(stat -f%z "$f" 2>/dev/null || stat -c%s "$f" 2>/dev/null || echo 0)
+          if [ "$size" -gt 2097152 ]; then
+            echo "ERROR: $f is too large ($size bytes > 2MB)"
+            echo "Use Git LFS or add to .gitignore"
+            exit 1
+          fi
+        done
+
+    # 5. Check for merge conflict markers
+    - name: check merge conflicts
+      run: |
+        for f in {staged_files}; do
+          [ -f "$f" ] || continue
+          if grep -qE '^(<{7}|={7}|>{7})' "$f" 2>/dev/null; then
+            echo "ERROR: merge conflict markers found in $f"
+            grep -nE '^(<{7}|={7}|>{7})' "$f" || true
+            exit 1
+          fi
+        done
+
+    # 6. Validate YAML files
+    - name: check yaml
+      glob: "*.{yml,yaml}"
+      run: |
+        for f in {staged_files}; do
+          [ -f "$f" ] || continue
+          # Try python first (most common)
+          if command -v python3 >/dev/null 2>&1; then
+            python3 -c "import yaml; yaml.safe_load(open('$f'))" 2>/dev/null || {
+              echo "ERROR: invalid YAML in $f"
+              exit 1
+            }
+          # Fallback to ruby
+          elif command -v ruby >/dev/null 2>&1; then
+            ruby -ryaml -e "YAML.load_file('$f')" 2>/dev/null || {
+              echo "ERROR: invalid YAML in $f"
+              exit 1
+            }
+          fi
+        done
+
+    # 7. Validate JSON files
+    - name: check json
+      glob: "*.json"
+      run: |
+        for f in {staged_files}; do
+          [ -f "$f" ] || continue
+          if command -v python3 >/dev/null 2>&1; then
+            python3 -m json.tool "$f" >/dev/null 2>&1 || {
+              echo "ERROR: invalid JSON in $f"
+              exit 1
+            }
+          elif command -v jq >/dev/null 2>&1; then
+            jq . "$f" >/dev/null 2>&1 || {
+              echo "ERROR: invalid JSON in $f"
+              exit 1
+            }
+          fi
+        done
+
+commit-msg:
+  jobs:
+    - name: conventional commits
+      run: |
+        msg_file="{1}"
+        [ -f "$msg_file" ] || exit 0
+
+        # Read first non-comment, non-empty line
+        subject=$(grep -v '^#' "$msg_file" | grep -v '^$' | head -n1 || true)
+
+        if [ -z "$subject" ]; then
+          echo "commit-msg: empty commit message"
+          exit 1
+        fi
+
+        # Allow merge and revert commits
+        if echo "$subject" | grep -qE '^Merge |^Revert '; then
+          exit 0
+        fi
+
+        # Conventional Commits pattern
+        pattern='^(feat|fix|docs|style|refactor|perf|test|chore|ci|build|revert)(\([a-zA-Z0-9_.\-]+\))?!?: .+'
+
+        if ! echo "$subject" | grep -qE "$pattern"; then
+          echo "commit-msg: does not follow Conventional Commits"
+          echo ""
+          echo "  Expected format:"
+          echo "    <type>(<scope>): <subject>"
+          echo ""
+          echo "  Allowed types: feat | fix | docs | style | refactor | perf | test |"
+          echo "                 chore | ci | build | revert"
+          echo ""
+          echo "  Examples:"
+          echo "    feat: support per-segment AES keys"
+          echo "    fix(download): resume missing segments on re-run"
+          echo "    docs: add quick-start examples"
+          echo ""
+          echo "  Got: $subject"
+          echo ""
+          echo "  To bypass: git commit --no-verify"
+          exit 1
+        fi

@@ -187,13 +187,20 @@ Flags:
 搭配 `--json` 时，所有结果输出到 **stdout**（单个 JSON 对象）：
 
 ```json
-{"ok":true,"path":"/data/videos/movie.mp4","duration_sec":12.34,"url":"https://...","name":"movie","mode":"single"}
+{
+  "ok": true,
+  "path": "/data/videos/movie.mp4",
+  "duration_sec": 12.34,
+  "url": "https://...",
+  "name": "movie",
+  "mode": "single"
+}
 ```
 
 失败时：
 
 ```json
-{"ok":false,"error":"download failed ...","mode":"single"}
+{ "ok": false, "error": "download failed ...", "mode": "single" }
 ```
 
 日志、进度、告警走 **stderr**，可安全只解析 stdout 的 JSON。
@@ -226,28 +233,22 @@ AES-128 密钥会从 `#EXT-X-KEY` 自动识别。若密钥无显式 IV，则取 
 make build            # 构建到 ./bin/m3u8dl
 make test             # 运行测试
 make lint             # 运行 golangci-lint
-make install-hooks    # 安装 git 提交钩子（代码风格/规范检查）
+make install-hooks    # 安装 git 提交钩子（lefthook）
 make release          # 运行 goreleaser（需安装 goreleaser）
 ```
 
 ### 提交钩子（Git Hooks）
 
-本仓库内置了提交钩子与统一风格工具，解决不同编辑器差异（文件末尾换行、尾随空白、行尾符不一致）以及代码协同风格规范问题：
+本仓库使用 [Lefthook](https://lefthook.dev)（单一 Go 二进制）管理 git hooks，确保代码风格一致：
 
-| 工具 | 作用 |
-| --- | --- |
-| `make install-hooks` | 安装 git hooks（`core.hooksPath` → `.hooks/`） |
-| `.hooks/pre-commit` | 提交前自动检查/修复：`gofmt`、`go vet`、末尾换行、尾随空白、LF 行尾 |
-| `.hooks/commit-msg` | 强制 [Conventional Commits](CONTRIBUTING.md#commit-messages) 提交消息 |
-| `pre-commit` 框架 | 跨插件规范（`end-of-file-fixer`、`trailing-whitespace`、`check-yaml` 等），见 `.pre-commit-config.yaml` |
-| `.gitattributes` | 统一文本文件 LF 行尾、二进制声明，配合 Linguist |
-| `.editorconfig` | 跨编辑器统一缩进/编码/行尾 |
-
-```bash
-pip install pre-commit   # 可选：启用 pre-commit 框架
-pre-commit install
-pre-commit run --all-files
-```
+| 工具                 | 作用                                                                                            |
+| -------------------- | ----------------------------------------------------------------------------------------------- |
+| `make install-hooks` | 安装 lefthook 并设置 `pre-commit` + `commit-msg` 钩子                                           |
+| `pre-commit`         | 提交前自动检查/修复：`gofmt`、`go vet`、末尾换行、尾随空白、LF 行尾、YAML/JSON 验证、大文件检查 |
+| `commit-msg`         | 强制 [Conventional Commits](CONTRIBUTING.md#commit-messages) 提交消息                           |
+| `lefthook.yml`       | 钩子配置（并行执行、自动 stage 修复）                                                           |
+| `.gitattributes`     | 统一文本文件 LF 行尾、二进制声明，配合 Linguist                                                 |
+| `.editorconfig`      | 跨编辑器统一缩进/编码/行尾                                                                      |
 
 ---
 

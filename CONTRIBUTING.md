@@ -123,7 +123,7 @@ What "atomic" means in practice:
   split them: `fix: ...` and `feat: ...`. Do not bundle unrelated edits into one
   commit.
 - **Every commit builds and passes.** A commit should leave the tree in a working
-  state (compiles, `make style-check` + `go vet` pass) so any intermediate commit
+  state (compiles, `make hooks-run` + `go vet` pass) so any intermediate commit
   can be checked out or bisected safely.
 - **Atomic at the line/file level.** Prefer staging only the files/lines that
   belong to the change (`git add <file>` or `git add -p`). Avoid committing
