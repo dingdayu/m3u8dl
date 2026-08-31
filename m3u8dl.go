@@ -17,11 +17,13 @@ import (
 	"crypto/cipher"
 	"crypto/md5"
 	"crypto/tls"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
@@ -29,6 +31,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,6 +40,18 @@ import (
 
 	"github.com/spf13/cobra"
 )
+
+// Agent Skills (https://agentskills.io) bundled into the binary so users can
+// install them with `m3u8dl skills install` instead of cloning the repo. The
+// canonical sources live in .agents/skills/<name>/ (scripts/sync-skills.sh
+// generates the .claude/skills mirror). The "all:" prefix is required so the
+// dot-directory is embedded.
+//
+//go:embed all:.agents/skills
+var embeddedSkills embed.FS
+
+// skillsEmbedRoot is the embedded prefix that holds the skill folders.
+const skillsEmbedRoot = ".agents/skills"
 
 const (
 	// PROGRESS_WIDTH is the length of the progress bar
@@ -178,7 +193,241 @@ func newRootCmd() *cobra.Command {
 	cmd.Version = versionString()
 	cmd.SetVersionTemplate("m3u8dl version {{.Version}}\n")
 
+	// Subcommand exposing the embedded Agent Skills to the user's coding agent.
+	cmd.AddCommand(newSkillsCmd())
+
 	return cmd
+}
+
+// skillAgentTargets maps an --agent preset to the directory (relative to the
+// install root) where that agent product discovers project skills. ".agents"
+// is the vendor-neutral location of the Agent Skills open standard
+// (https://agentskills.io), scanned by VS Code/GitHub Copilot, Codex, Gemini
+// CLI and others; ".claude"/".github" cover Claude Code and older Copilot
+// layouts.
+var skillAgentTargets = map[string]string{
+	"agents":  filepath.Join(".agents", "skills"),
+	"claude":  filepath.Join(".claude", "skills"),
+	"copilot": filepath.Join(".github", "skills"),
+}
+
+// skillInstallJSON is the --json result shape of "m3u8dl skills install".
+type skillInstallJSON struct {
+	OK     bool     `json:"ok"`
+	Target string   `json:"target,omitempty"`
+	Skills []string `json:"skills,omitempty"`
+	Files  int      `json:"files,omitempty"`
+	Error  string   `json:"error,omitempty"`
+	DryRun bool     `json:"dry_run,omitempty"`
+}
+
+// newSkillsCmd builds the "skills" subcommand tree. It exposes the Agent
+// Skills bundled into this binary (see embeddedSkills) so a user's coding
+// agent can install them locally instead of cloning the repository.
+func newSkillsCmd() *cobra.Command {
+	var (
+		agent    string
+		dir      string
+		scope    string
+		force    bool
+		dryRun   bool
+		skillOut bool
+		skillArg string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "skills",
+		Short: "管理内置的 Agent Skills（供 AI 编码助手自动发现与使用）",
+		Long: `m3u8dl 二进制内置了 Agent Skills（https://agentskills.io），
+让用户的 AI 编码助手（VS Code / GitHub Copilot、Claude Code、Codex、Gemini CLI 等）
+了解如何正确地安装与使用本工具。
+
+用法示例:
+  m3u8dl skills list                        # 查看内置 skills
+  m3u8dl skills install                     # 安装到当前项目的 .agents/skills/
+  m3u8dl skills install --agent claude      # 安装到 .claude/skills/
+  m3u8dl skills install --scope user        # 安装到 ~/.agents/skills/（所有项目共用）
+  m3u8dl skills install --dir ./out --json  # 指定目录并输出 JSON（供脚本/Agent 解析）`,
+	}
+
+	installCmd := &cobra.Command{
+		Use:   "install",
+		Short: "把内置 skills 安装到指定目录，供 Agent 自动发现",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			target, err := resolveSkillTarget(agent, dir, scope)
+			if err != nil {
+				return err
+			}
+			res, err := installSkills(target, skillArg, force, dryRun)
+			if skillOut {
+				b, _ := json.Marshal(res)
+				fmt.Println(string(b))
+			} else if err == nil {
+				if dryRun {
+					logger.Printf("[dry-run] 将写入 %d 个文件到 %s (skills=%s)\n", res.Files, res.Target, strings.Join(res.Skills, ","))
+				} else {
+					fmt.Printf("[Success] 已安装 %d 个文件 -> %s (skills: %s)\n", res.Files, res.Target, strings.Join(res.Skills, ", "))
+				}
+			}
+			return err
+		},
+	}
+	installCmd.Flags().StringVar(&agent, "agent", "agents", "目标 Agent 预设：agents(.agents/skills) | claude(.claude/skills) | copilot(.github/skills)")
+	installCmd.Flags().StringVar(&dir, "dir", "", "直接指定 skills 根目录（覆盖 --agent/--scope）")
+	installCmd.Flags().StringVar(&scope, "scope", "project", "安装范围：project（当前目录）| user（$HOME）")
+	installCmd.Flags().StringVar(&skillArg, "skill", "", "只安装指定名称的 skill（默认安装全部）")
+	installCmd.Flags().BoolVar(&force, "force", false, "覆盖已存在的同名 skill")
+	installCmd.Flags().BoolVar(&dryRun, "dry-run", false, "只报告将安装的内容，不写文件")
+	installCmd.Flags().BoolVar(&skillOut, "json", false, "以 JSON 输出结构化结果（利于程序/LLM 解析）")
+
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "列出二进制内置的 skills",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			names, err := listEmbeddedSkills()
+			if err != nil {
+				return failCode(1, "%v", err)
+			}
+			if skillOut {
+				b, _ := json.Marshal(map[string]any{"ok": true, "skills": names})
+				fmt.Println(string(b))
+				return nil
+			}
+			for _, n := range names {
+				fmt.Println(n)
+			}
+			return nil
+		},
+	}
+	listCmd.Flags().BoolVar(&skillOut, "json", false, "以 JSON 输出结构化结果")
+
+	cmd.AddCommand(installCmd, listCmd)
+	return cmd
+}
+
+// resolveSkillTarget turns the --agent / --dir / --scope flags into an
+// absolute skills root directory.
+func resolveSkillTarget(agent, dir, scope string) (string, error) {
+	if dir != "" {
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			return "", failCode(1, "解析 --dir 失败: %v", err)
+		}
+		return abs, nil
+	}
+	rel, ok := skillAgentTargets[agent]
+	if !ok {
+		return "", failCode(1, "未知 --agent %q（可选：agents|claude|copilot）", agent)
+	}
+	switch scope {
+	case "project":
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", failCode(1, "获取当前目录失败: %v", err)
+		}
+		return filepath.Join(cwd, rel), nil
+	case "user":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", failCode(1, "获取用户目录失败: %v", err)
+		}
+		return filepath.Join(home, rel), nil
+	default:
+		return "", failCode(1, "未知 --scope %q（可选：project|user）", scope)
+	}
+}
+
+// listEmbeddedSkills returns the sorted skill names present in the embedded FS.
+func listEmbeddedSkills() ([]string, error) {
+	skillDirs, err := embeddedSkills.ReadDir(skillsEmbedRoot)
+	if err != nil {
+		return nil, fmt.Errorf("读取内置 skills 失败: %w", err)
+	}
+	var names []string
+	for _, d := range skillDirs {
+		if !d.IsDir() {
+			continue
+		}
+		if _, err := embeddedSkills.ReadFile(skillsEmbedRoot + "/" + d.Name() + "/SKILL.md"); err == nil {
+			names = append(names, d.Name())
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// installSkills copies the embedded skills (or one named skill) into the
+// target skills root. An existing copy is never silently overwritten; pass
+// force=true to upgrade it.
+func installSkills(target, only string, force, dryRun bool) (skillInstallJSON, error) {
+	res := skillInstallJSON{Target: target, DryRun: dryRun}
+	names, err := listEmbeddedSkills()
+	if err != nil {
+		return skillInstallJSON{OK: false, Error: err.Error()}, failCode(1, "%v", err)
+	}
+	if only != "" {
+		found := false
+		for _, n := range names {
+			if n == only {
+				found = true
+			}
+		}
+		if !found {
+			msg := fmt.Sprintf("内置 skill %q 不存在（可用：%s）", only, strings.Join(names, ", "))
+			return skillInstallJSON{OK: false, Error: msg}, failCode(1, "%s", msg)
+		}
+		names = []string{only}
+	}
+	res.Skills = names
+
+	var count int
+	for _, name := range names {
+		root := skillsEmbedRoot + "/" + name
+		dstRoot := filepath.Join(target, name)
+		marker := filepath.Join(dstRoot, "SKILL.md")
+		if _, err := os.Stat(marker); err == nil && !force && !dryRun {
+			msg := fmt.Sprintf("%s 已存在，如需覆盖请加 --force", dstRoot)
+			return skillInstallJSON{OK: false, Error: msg, Target: target}, failCode(1, "%s", msg)
+		}
+		err := fs.WalkDir(embeddedSkills, root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(root, p)
+			if err != nil {
+				return err
+			}
+			dst := filepath.Join(dstRoot, filepath.FromSlash(rel))
+			count++
+			if dryRun {
+				return nil
+			}
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				return err
+			}
+			data, err := embeddedSkills.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			mode := os.FileMode(0o644)
+			if strings.HasPrefix(filepath.ToSlash(rel), "scripts/") {
+				mode = 0o755
+			}
+			return os.WriteFile(dst, data, mode)
+		})
+		if err != nil {
+			msg := fmt.Sprintf("安装 skill %s 失败: %v", name, err)
+			return skillInstallJSON{OK: false, Error: msg}, failCode(1, "%s", msg)
+		}
+	}
+	res.Files = count
+	res.OK = true
+	return res, nil
 }
 
 // runRoot is the cobra entry callback: populates runtime config and runs the download.
