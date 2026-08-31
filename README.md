@@ -58,10 +58,78 @@ sudo mv m3u8dl /usr/local/bin/
 m3u8dl --version
 ```
 
-> **China / slow network?** GitHub downloads can be slow there. Use a trusted
-> mirror prefix for the same URL (e.g. `https://ghfast.top/`) or a one-click
-> install script. See the
-> [**China download acceleration guide**](README.zh.md#国内加速下载) for details.
+> **China / slow network?** GitHub downloads can be slow there. We recommend
+> the **npm install** below (npmmirror mirrors it and jsDelivr can serve the
+> binaries over CDN), or `go install` with `GOPROXY=https://goproxy.cn`. See
+> the [**China download acceleration guide**](README.zh.md#国内加速下载).
+
+### Option 0b — npm (Node.js, cross-platform)
+
+`m3u8dl` is also published to **npm** as a meta package that automatically
+selects the right pre-built binary for your OS/arch:
+
+```bash
+# Global CLI install (puts `m3u8dl` on your PATH)
+npm install -g m3u8dl
+
+# Or run once without installing
+npx m3u8dl --url https://example.com/index.m3u8 --json
+```
+
+Supported platforms: `darwin-arm64`, `darwin-x64`, `linux-arm64`,
+`linux-x64`, `win32-x64`. Other platforms can use `go install` (below).
+
+> **China / npmmirror:** the npm registry is fully mirrored by
+> [npmmirror.com](https://npmmirror.com) (Alibaba), which is fast in China:
+>
+> ```bash
+> npm install -g m3u8dl --registry=https://registry.npmmirror.com
+> ```
+>
+> The platform binaries inside the packages are also served by
+> [jsDelivr](https://www.jsdelivr.com/) — a CDN backed by Cloudflare/Fastly —
+> at `https://cdn.jsdelivr.net/npm/m3u8dl-linux-x64@<version>/bin/m3u8dl`.
+
+### Verifying downloads (recommended)
+
+Release artifacts are **attested** by the build. Verification is simple:
+
+1. **Checksums** — every release has `checksums.txt` (SHA-256 of the archives):
+
+  ```bash
+  sha256sum -c checksums.txt --ignore-missing
+  ```
+
+2. **GitHub Artifact Attestations** — the release **archives** (`.tar.gz` /
+  `.zip`) are attested on GitHub; a single command confirms they were built by
+  this repo's release workflow:
+
+  ```bash
+  gh attestation verify m3u8dl_v1.0.0_Linux_x86_64.tar.gz --repo dingdayu/m3u8dl
+  ```
+
+3. **Standalone binaries (npm / jsDelivr)** — a bare binary downloaded from
+  jsDelivr (or unpacked from npm) is not an attested artifact. Verify it
+  against `bin-checksums.txt`, which is published on the release and itself
+  attested:
+
+  ```bash
+  curl -fSLO https://github.com/dingdayu/m3u8dl/releases/download/v1.0.0/bin-checksums.txt
+  sha256sum -c bin-checksums.txt --ignore-missing
+  # Optional: prove the manifest itself came from this repo's release build:
+  gh attestation verify bin-checksums.txt --repo dingdayu/m3u8dl
+  ```
+
+4. **npm provenance & self-check** — npm packages are published with
+  [provenance](https://docs.npmjs.com/generating-provenance-statements)
+  (see the badge on the package page, or `npm audit signatures`). In addition,
+  the `m3u8dl` launcher verifies the platform binary's SHA-256 against the
+  digest recorded at pack time **on every run**, and aborts with a clear
+  error if the download was corrupted or tampered with:
+
+  ```bash
+  npm audit signatures
+  ```
 
 ### Option A — `go install` (requires Go 1.27+)
 

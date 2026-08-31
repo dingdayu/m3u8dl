@@ -17,6 +17,11 @@ movie/
 *.log
 coverage.out
 
+# npm packaging artifacts (populated at release time by scripts/npm-pack.sh)
+npm/platforms/*/bin/
+node_modules/
+*.tgz
+
 # Editors
 .vscode/
 .idea/

@@ -1,0 +1,23 @@
+{
+  "name": "m3u8dl-linux-arm64",
+  "version": "0.0.0",
+  "description": "m3u8dl binary for Linux arm64",
+  "license": "MIT",
+  "homepage": "https://github.com/dingdayu/m3u8dl",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dingdayu/m3u8dl.git"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin",
+    "index.js"
+  ],
+  "main": "index.js",
+  "preferUnplugged": true
+}

@@ -32,13 +32,41 @@ Archive naming is `m3u8dl_<ver>_<OS>_<ARCH>.tar.gz` (or `.zip` on Windows)
 where `<OS>` is `Linux` / `Darwin` / `Windows` and amd64 is written as
 `x86_64`. E.g. `m3u8dl_1.2.3_Linux_x86_64.tar.gz`.
 
-For users in China/slow networks, prefix the download URL with a mirror (e.g.
-`https://ghfast.top/`) or see the one-line install script and mirror list in
-`README.zh.md#国内加速下载`.
+For users in China/slow networks, prefer the **npm** channel (mirrored by
+npmmirror.com / Alibaba) or the jsDelivr CDN (Cloudflare/Fastly-backed) — both
+are verifiable; see `README.zh.md#国内加速下载` and the verification section
+in `README.md`.
 
 ```bash
 go install github.com/dingdayu/m3u8dl@latest
 ```
+
+## Install (npm)
+
+`m3u8dl` is published to npm as a meta package that auto-selects the correct
+pre-built binary for darwin-arm64 / darwin-x64 / linux-arm64 / linux-x64 /
+win32-x64:
+
+```bash
+npm install -g m3u8dl                    # global CLI
+npx m3u8dl --url <m3u8-url> --json       # one-shot
+# China mirror:
+npm install -g m3u8dl --registry=https://registry.npmmirror.com
+```
+
+The platform binaries are also on jsDelivr:
+`https://cdn.jsdelivr.net/npm/m3u8dl-<platform>@<version>/bin/m3u8dl`
+(e.g. `m3u8dl-linux-x64`).
+
+## Verifying releases
+
+Release artifacts are attested a few ways, all verifiable without extra
+tooling beyond `gh`/`npm`: SHA-256 `checksums.txt` for archives,
+`bin-checksums.txt` for standalone binaries (the npm/jsDelivr channel), GitHub
+Artifact Attestations (`gh attestation verify <file> --repo dingdayu/m3u8dl`),
+and npm provenance (`npm audit signatures`). The npm launcher also re-checks
+the platform binary's SHA-256 on every run and aborts on mismatch. Verify
+before installing; see README.md "Verifying downloads".
 
 ## Quick Usage
 
