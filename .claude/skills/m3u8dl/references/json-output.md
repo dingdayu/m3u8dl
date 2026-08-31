@@ -40,6 +40,11 @@ success** — trust `ok`, not the presence of `error`.
 Failures exit non-zero (usually `1`; npm launcher integrity failures exit
 `65`). Cobra usage errors also produce a `{"ok":false,...}` object on stdout.
 
+On an `ok:false` download failure, simply re-running the same command is the
+safe recovery: missing segments are re-fetched and interrupted ones resume
+mid-file from their `<name>.ts.part` via HTTP Range (see
+[troubleshooting.md](troubleshooting.md)).
+
 ## Fields
 
 | Field          | Type   | Present when               | Meaning                                                       |

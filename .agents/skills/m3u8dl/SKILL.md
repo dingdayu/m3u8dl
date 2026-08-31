@@ -54,6 +54,7 @@ directory). Override only what the user asks for:
 | Auth headers when the host needs them | `-c/--cookie`, `-r/--referer`, `-H "K: V"` (repeatable), `--user-agent` |
 | Self-signed TLS                       | `-s/--insecure`                                                         |
 | Per-request timeout seconds           | `-t <sec>`                                                              |
+| Cap aggregate download speed          | `--rate-limit 2M` (e.g. `500KB`; bytes/s; `0`/empty = unlimited)        |
 
 Full flag semantics: [references/flags.md](references/flags.md).
 
@@ -66,8 +67,9 @@ Success = exit code `0` AND `"ok":true` on stdout. Report `path` and
 On failure: read `error` (and stderr logs), then consult
 [references/troubleshooting.md](references/troubleshooting.md). Common ones:
 
-- **Missing/broken segments** — the TS directory is kept; simply re-run the
-  _same command_ to resume only the missing segments.
+- **Missing/broken segments** — the TS dir is kept, and interrupted segments
+  are kept byte-by-byte in `<name>.ts.part`. Re-run the _same command_: missing
+  segments are re-fetched and partial ones resume mid-file via HTTP Range.
 - **Encrypted playlist** — AES-128 is handled automatically when the `KEY` URI
   is reachable; 403s on segments usually mean the playlist host requires a
   cookie/referer (see flags above).

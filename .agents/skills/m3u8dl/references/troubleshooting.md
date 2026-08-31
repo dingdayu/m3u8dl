@@ -7,10 +7,15 @@ Match on the keywords given.
 
 _Download failed (missing/invalid TS segments); the ts directory is kept for resume._
 
-Some segments failed after 5 retries. **Fix: re-run the exact same command** —
-already-downloaded segments are kept and only missing ones are fetched. If it
-keeps failing: lower `--threads 8`, raise `--timeout`, and check the URL is
-still valid in a browser.
+Some segments failed after 5 retries. **Fix: re-run the exact same command.**
+Already-downloaded segments are skipped, and partially downloaded ones are
+resumed **at byte level**: each interrupted segment is kept as
+`<name>.ts.part` and the next attempt requests only the missing tail with
+`Range: bytes=<n>-` (the tool self-heals if the server ignores Range, answers
+`200`, or rejects the stale offset with `416`). If it keeps failing: lower
+`--threads 8`, raise `--timeout`, and check the URL is still valid in a
+browser. Keep `.part` files intact between runs — never rename or hand-trim
+the TS dir.
 
 ## "[Failed] 下载目录无有效 ts 文件，请检查url地址有效性"
 

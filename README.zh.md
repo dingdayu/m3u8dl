@@ -20,7 +20,9 @@ CLI 基于 [cobra](https://github.com/spf13/cobra)：语义化长参数 + 短别
 - 🔐 AES-128 CBC 解密（支持每切片独立密钥，缺省时复用 key 前 16 字节作 IV）
 - 🪆 嵌套 m3u8 / Master Playlist 递归展开
 - 🛡️ 广告 / 重复切片按内容哈希（MD5）去重
-- ⏯️ 断点续传 —— 重跑同一命令自动补齐缺失切片
+- ⏯️ 断点续传 —— 缺失切片自动补齐，中断切片按字节经 HTTP Range 继续下载
+- 🚦 `--rate-limit` 总下载速度上限（如 `2M`、`500KB`，所有线程合计）
+- 🌐 共享 HTTP 连接池，支持 HTTP/2 多路复用与 Range 续传
 - 🎞️ 优先 `ffmpeg` 无损 concat 合并，内置合并兜底
 - 🤖 机器友好的 `--json` 输出；日志/进度走 stderr，结果走 stdout
 - 📦 批量下载（URL 列表文件）
@@ -172,6 +174,9 @@ m3u8dl -u https://example.com/index.m3u8 -o 我的视频 -n 32
 # 结构化 JSON 输出（编程/LLM/Agent 使用）
 m3u8dl --url https://example.com/index.m3u8 --threads 16 --json
 
+# 总下载速度限制在约 2 MiB/s
+m3u8dl -u https://example.com/index.m3u8 --rate-limit 2M
+
 # 批量下载
 m3u8dl --list urls.txt --save-path /data/videos
 ```
@@ -195,6 +200,8 @@ Flags:
       --user-agent string User-Agent 请求头 [旧参数 -ua]
   -s, --insecure          允许不安全的 TLS 请求
       --purge-dup         广告/重复切片去重 [旧参数 -pd]
+      --rate-limit string 总下载速度上限，如 2M / 500KB / 200000
+                          （字节/秒，0 或空 = 不限速）
       --clean-ts          合并成功后自动清除 ts 目录 (默认 true)
   -j, --json              输出结构化 JSON
   -l, --list string       批量下载列表文件（每行一个 m3u8 地址）
@@ -210,6 +217,31 @@ Flags:
 - `v2`（默认）— 以 `scheme://host` 解析 TS
 - `v1` — 以 `scheme://host/m3u8 所在目录` 解析 TS
 - `auto` — 用 `v1`，下载失败时回退 `v2`
+
+### 限速
+
+`--rate-limit` 用令牌桶限制**所有线程合计**的下载速度：
+
+```bash
+m3u8dl -u https://example.com/index.m3u8 --rate-limit 2M      # 约 2 MiB/s
+m3u8dl -u https://example.com/index.m3u8 --rate-limit 500KB
+m3u8dl -u https://example.com/index.m3u8 --rate-limit 200000  # 纯字节/秒
+```
+
+后缀 `K/KB`、`M/MB`、`G/GB` 按 1024 进制解析且不区分大小写；`0` 或空（默认）
+表示不限速。
+
+### 续传、Range 与 HTTP/2
+
+所有下载共用同一个带连接池的 HTTP 客户端，TLS 请求会协商 **HTTP/2**（单连接
+多路复用，`--insecure` 时同样生效）。中断的切片会以 `<name>.ts.part` 保留已
+下载的字节；下一次重试 —— 或重跑同一条命令 —— 会用 `Range: bytes=<n>-`
+从断点继续：
+
+- `206` 且区间起点与已有字节一致 → 直接追加尾部数据
+- `200`（服务器忽略 Range）→ 该切片从头重下
+- `416`（偏移已过期，如资源变小）→ 丢弃 `.part` 后整段重下
+- `auto` 回退备用 host 时总是从 0 重下，因为备用地址可能是另一个资源
 
 ### JSON 输出
 
@@ -259,11 +291,47 @@ m3u8dl skills install --scope user       # 安装到 ~/.agents/skills/（所有�
 
 ---
 
+## Shell 自动补全
+
+`m3u8dl` 基于 cobra 内置的 `completion` 子命令，支持 **bash**、**zsh**、
+**fish**、**powershell** 四种 shell 的自动补全脚本。各 shell 的详细说明可运行
+`m3u8dl completion <shell> --help` 查看。
+
+仅为**当前会话**加载补全：
+
+```bash
+source <(m3u8dl completion bash)    # bash（需安装 bash-completion 包）
+source <(m3u8dl completion zsh)     # zsh
+m3u8dl completion fish | source     # fish
+m3u8dl completion powershell | Out-String | Invoke-Expression  # PowerShell
+```
+
+**持久化**安装（完成后重开一个 shell 生效）：
+
+```bash
+# bash —— Linux（可能需要 sudo）；macOS：$(brew --prefix)/etc/bash_completion.d/m3u8dl
+m3u8dl completion bash > /etc/bash_completion.d/m3u8dl
+
+# zsh —— Linux；macOS：$(brew --prefix)/share/zsh/site-functions/_m3u8dl
+#   （前提：已启用 zsh 补全：autoload -U compinit; compinit）
+m3u8dl completion zsh > "${fpath[1]}/_m3u8dl"
+
+# fish
+m3u8dl completion fish > ~/.config/fish/completions/m3u8dl.fish
+
+# PowerShell —— 将下行写入 $PROFILE
+m3u8dl completion powershell | Out-String | Invoke-Expression
+```
+
+---
+
 ## 示例
 
 ### 续传失败的下载
 
-若部分切片失败，ts 目录会被保留。重跑同一命令会自动补齐缺失切片。
+若部分切片失败，ts 目录会被保留，未下完的切片也会以 `<name>.ts.part` 留下
+字节级进度。重跑同一命令：缺失切片自动补齐，中断切片经 HTTP Range 从断点
+继续（见[续传、Range 与 HTTP/2](#续传range-与-http2)）。
 
 ### 去除广告切片
 
@@ -306,10 +374,11 @@ make release          # 运行 goreleaser（需安装 goreleaser）
 
 ## 路线图
 
-- [ ] 补充 CLI shell 自动补全文档/脚本
+- [x] 补充 CLI shell 自动补全文档/脚本（见 [Shell 自动补全](#shell-自动补全)）
 - [ ] 发布 Homebrew tap
-- [ ] 使用 mock m3u8 服务器做端到端测试
-- [ ] 支持 HTTP/2、Range 请求与限速
+- [x] 使用 mock m3u8 服务器做端到端测试（`m3u8dl_test.go`，基于 `httptest`
+      的切片/传输层测试）
+- [x] 支持 HTTP/2、Range 请求与限速（`--rate-limit`、字节级 `.part` 续传）
 
 ---
 

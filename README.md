@@ -22,7 +22,11 @@ auto-completion. It is friendly to both humans and LLM/Agent workflows.
 - 🔐 AES-128 CBC decryption (per-segment keys), with IV reuse fallback
 - 🪆 Nested m3u8 / Master Playlist expansion (recursive)
 - 🛡️ Ad / duplicate segment deduplication by content hash (MD5)
-- ⏯️ Resume from breakpoint — re-run the same command to fetch the missing ones
+- ⏯️ Resume from breakpoint — missing segments are re-fetched and partially
+  downloaded segments continue byte-by-byte via HTTP Range
+- 🚦 Aggregate speed cap with `--rate-limit` (e.g. `2M`, `500KB`; over all
+  download threads combined)
+- 🌐 Shared HTTP client with HTTP/2 multiplexing and Range resume
 - 🎞️ Prefers `ffmpeg` for lossless concat merge; built-in fallback included
 - 🤖 Machine-friendly `--json` output; logs/progress go to stderr, results to stdout
 - 📦 Batch downloads from a URL list file
@@ -166,6 +170,9 @@ m3u8dl -u https://example.com/index.m3u8 -o myvideo -n 32
 # Structure the JSON output (great for scripts/LLM/Agent)
 m3u8dl --url https://example.com/index.m3u8 --threads 16 --json
 
+# Cap the aggregate download speed at ~2 MiB/s
+m3u8dl -u https://example.com/index.m3u8 --rate-limit 2M
+
 # Batch download
 m3u8dl --list urls.txt --save-path /data/videos
 ```
@@ -189,6 +196,8 @@ Flags:
       --user-agent string User-Agent header [legacy -ua]
   -s, --insecure          allow insecure TLS requests
       --purge-dup         remove ad/duplicate segments [legacy -pd]
+      --rate-limit string aggregate download speed cap, e.g. 2M / 500KB /
+                          200000 (bytes/s; 0 or empty = unlimited)
       --clean-ts          delete the ts directory after a successful merge (default true)
   -j, --json              output structured JSON
   -l, --list string       batch download list file (one m3u8 URL per line)
@@ -205,6 +214,35 @@ choose the resolution strategy:
 - `v2` (default) — resolve TS against `scheme://host`
 - `v1` — resolve TS against `scheme://host/dir-of-m3u8`
 - `auto` — use `v1` and fall back to `v2` on download failure
+
+### Speed limit
+
+`--rate-limit` caps the **aggregate** download speed across all threads with a
+token bucket:
+
+```bash
+m3u8dl -u https://example.com/index.m3u8 --rate-limit 2M   # ≈2 MiB/s total
+m3u8dl -u https://example.com/index.m3u8 --rate-limit 500KB
+m3u8dl -u https://example.com/index.m3u8 --rate-limit 200000  # plain bytes/s
+```
+
+Suffixes `K/KB`, `M/MB`, `G/GB` are 1024-based and case-insensitive; `0` or
+empty (the default) means unlimited.
+
+### Resume, Range & HTTP/2
+
+Downloads share one pooled `http.Client`, and TLS requests negotiate
+**HTTP/2** (multiplexed over a single connection) even with `--insecure`.
+Every interrupted segment is kept as `<name>.ts.part`; the next retry — or the
+next run of the same command — resumes it mid-file with
+`Range: bytes=<n>-`:
+
+- `206` whose range matches the existing bytes → the tail is appended
+- `200` (server ignores Range) → the segment restarts from scratch
+- `416` (stale offset, e.g. the resource shrank) → the `.part` is dropped and
+  the segment is re-downloaded whole
+- `auto` host fallback always restarts clean, since the alternate URL may be a
+  different resource
 
 ### JSON output
 
@@ -259,12 +297,49 @@ conventions.
 
 ---
 
+## Shell Completion
+
+`m3u8dl` uses cobra's built-in `completion` subcommand to generate
+auto-completion scripts for **bash**, **zsh**, **fish** and **powershell**.
+Run `m3u8dl completion <shell> --help` for shell-specific notes.
+
+Load completions for the **current session only**:
+
+```bash
+source <(m3u8dl completion bash)    # bash  (needs the bash-completion package)
+source <(m3u8dl completion zsh)     # zsh
+m3u8dl completion fish | source     # fish
+m3u8dl completion powershell | Out-String | Invoke-Expression  # PowerShell
+```
+
+Install them **persistently** (then open a new shell):
+
+```bash
+# bash — Linux (may need sudo); macOS: $(brew --prefix)/etc/bash_completion.d/m3u8dl
+m3u8dl completion bash > /etc/bash_completion.d/m3u8dl
+
+# zsh — Linux; macOS: $(brew --prefix)/share/zsh/site-functions/_m3u8dl
+#   (zsh completion must already be enabled: autoload -U compinit; compinit)
+m3u8dl completion zsh > "${fpath[1]}/_m3u8dl"
+
+# fish
+m3u8dl completion fish > ~/.config/fish/completions/m3u8dl.fish
+
+# PowerShell — append the line below to your $PROFILE
+m3u8dl completion powershell | Out-String | Invoke-Expression
+```
+
+---
+
 ## Examples
 
 ### Resume a failed download
 
-If some segments fail, the ts directory is kept. Simply re-run the same command
-and only the missing segments are re-fetched.
+If some segments fail, the ts directory is kept — and so is each segment's
+byte-level progress in a `<name>.ts.part` file. Re-run the same command: only
+the missing segments are re-fetched, and partially downloaded ones continue
+where they stopped via HTTP Range (see [Resume, Range &
+HTTP/2](#resume-range--http2)).
 
 ### Remove ad segments
 
@@ -309,10 +384,13 @@ git hooks, ensuring consistent code style regardless of editor/OS:
 
 ## Roadmap
 
-- [ ] Add CLI shell completion scripts/docs
+- [x] Add CLI shell completion scripts/docs (see [Shell
+      Completion](#shell-completion))
 - [ ] Publish a Homebrew tap
-- [ ] Add end-to-end tests with a mock m3u8 server
-- [ ] Support HTTP/2, range requests, and speed limits
+- [x] Add end-to-end tests with a mock m3u8 server (`m3u8dl_test.go`,
+      `httptest`-based segment/transport suite)
+- [x] Support HTTP/2, range requests, and speed limits (`--rate-limit`,
+      byte-level `.part` resume)
 
 ---
 

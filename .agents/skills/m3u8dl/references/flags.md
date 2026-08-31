@@ -19,6 +19,7 @@ m3u8dl [flags] <m3u8-url> [outputName]
 | `--insecure`   | `-s`  | off       | Skip TLS verification (self-signed hosts only).                                                                                                                                                                                 |
 | `--purge-dup`  | —     | off       | Scan and remove ALL occurrences of duplicate-content (ad) segments by hash. Legacy: `-pd`.                                                                                                                                      |
 | `--clean-ts`   | —     | true      | Delete the TS dir after successful merge (keep for debugging with `--clean-ts=false`).                                                                                                                                          |
+| `--rate-limit` | —     | unlimited | Aggregate download speed cap across ALL threads, token-bucket paced: `2M`, `500KB`, `200000` (plain bytes/s). Suffixes K/KB, M/MB, G/GB are 1024-based, case-insensitive; `0` or empty = unlimited.                             |
 | `--json`       | `-j`  | off       | Print one structured JSON result to stdout; logs stay on stderr.                                                                                                                                                                |
 | `--list`       | `-l`  | —         | Batch file, one m3u8 URL per line. Per-URL output names are `<output>_NNN.mp4`.                                                                                                                                                 |
 | `--version`    | —     | —         | Print version (also `m3u8dl version <x>` template).                                                                                                                                                                             |
@@ -35,6 +36,18 @@ existing scripts keep working.
 - AES-128 segment encryption (`#EXT-X-KEY`) is decrypted automatically as
   long as the KEY URI is reachable with the same headers.
 - `#EXT-X-MAP` init segments and media initialization are handled during merge.
+
+## Resume & network behavior
+
+- All segment downloads share one pooled HTTP client; TLS connections
+  negotiate HTTP/2 (even with `--insecure`).
+- A segment interrupted mid-transfer is kept as `<name>.ts.part`. Retries and
+  re-runs of the same command resume it with `Range: bytes=<n>-`: a `206`
+  matching the stored prefix appends only the tail; a `200` restarts the
+  segment; a `416` (stale offset) drops the `.part` and redownloads it whole.
+- Finished segments have their `.part` removed; with `--clean-ts` the TS dir
+  (and any `.part` files) disappears after a successful merge.
+- `--rate-limit` throttles the sum over all threads, not each thread.
 
 ## Batch list file
 
