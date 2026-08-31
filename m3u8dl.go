@@ -159,7 +159,8 @@ const maxBurstBytes = 256 * 1024
 
 // parseRateLimit converts a --rate-limit value such as "2M", "500KB", "1.5M"
 // or a plain "200000" into bytes per second. Multipliers are 1024-based
-// (K/KB, M/MB, G/GB), case-insensitive. Returns an error for invalid input.
+// (K/KB, M/MB, G/GB), case-insensitive. Empty or "0" means unlimited
+// (returns 0, nil). Returns an error for invalid or negative input.
 func parseRateLimit(s string) (int64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -182,8 +183,11 @@ func parseRateLimit(s string) (int64, error) {
 		}
 	}
 	f, err := strconv.ParseFloat(s, 64)
-	if err != nil || f <= 0 {
+	if err != nil || f < 0 {
 		return 0, fmt.Errorf("无效的限速值 %q（示例：2M、500KB、200000）", s)
+	}
+	if f == 0 {
+		return 0, nil
 	}
 	bps := int64(f * float64(mult))
 	if bps < 1024 {
