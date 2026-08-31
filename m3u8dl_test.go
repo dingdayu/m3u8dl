@@ -459,7 +459,7 @@ func TestThrottleReadsPacesThroughput(t *testing.T) {
 	src := bytes.NewReader(bytes.Repeat([]byte{SYNC_BYTE}, size))
 
 	start := time.Now()
-	n, err := io.Copy(io.Discard, throttleReads(src))
+	n, err := io.Copy(io.Discard, throttleReads(src, t.Context()))
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("copy: %v", err)
@@ -480,7 +480,7 @@ func TestThrottleReadsNoopWhenUnlimited(t *testing.T) {
 	withRestoredGlobals(t)
 	rateLimiter = nil
 	var want io.Reader = bytes.NewReader([]byte("x"))
-	if got := throttleReads(want); got != want {
+	if got := throttleReads(want, t.Context()); got != want {
 		t.Fatal("without a limiter throttleReads must return the reader as-is")
 	}
 }

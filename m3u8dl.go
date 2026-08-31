@@ -217,7 +217,10 @@ const chunkBytes = 64 * 1024
 // each (re-chunked) Read charges the limiter only for the bytes actually
 // delivered — short reads (HTTP/2 frames, network fragmentation) would
 // otherwise over-draw the bucket and drag throughput below the limit.
-type throttledReader struct{ r io.Reader }
+type throttledReader struct {
+	r   io.Reader
+	ctx context.Context
+}
 
 func (t *throttledReader) Read(p []byte) (int, error) {
 	if len(p) > chunkBytes {
@@ -226,8 +229,10 @@ func (t *throttledReader) Read(p []byte) (int, error) {
 	n, err := t.r.Read(p)
 	if n > 0 {
 		// Blocking before the return paces the caller's next read, so the
-		// aggregate rate still converges to the limit.
-		if werr := rateLimiter.WaitN(context.Background(), n); werr != nil && err == nil {
+		// aggregate rate still converges to the limit. The wait follows the
+		// request context: when the client timeout cancels the response, the
+		// worker wakes immediately instead of sleeping past the deadline.
+		if werr := rateLimiter.WaitN(t.ctx, n); werr != nil && err == nil {
 			err = werr
 		}
 	}
@@ -235,12 +240,13 @@ func (t *throttledReader) Read(p []byte) (int, error) {
 }
 
 // throttleReads paces r through the shared token bucket; a no-op when
-// --rate-limit is unset.
-func throttleReads(r io.Reader) io.Reader {
+// --rate-limit is unset. ctx should be the owning request's context so a
+// timed-out request also cancels any in-flight limiter wait.
+func throttleReads(r io.Reader, ctx context.Context) io.Reader {
 	if rateLimiter == nil {
 		return r
 	}
-	return &throttledReader{r: r}
+	return &throttledReader{r: r, ctx: ctx}
 }
 
 // The global HTTP request config, read directly by get() (keeps old logic).
@@ -1244,7 +1250,7 @@ func writeTSFromResponse(res *http.Response, key, currPath string, resumeFrom in
 		return false
 	}
 
-	written, err := io.Copy(out, throttleReads(res.Body))
+	written, err := io.Copy(out, throttleReads(res.Body, res.Request.Context()))
 	if cerr := out.Close(); err == nil {
 		err = cerr
 	}
