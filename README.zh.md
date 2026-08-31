@@ -236,6 +236,29 @@ Flags:
 
 ---
 
+## Agent Skills（技能）
+
+本仓库内置 [Agent Skills](https://agentskills.io) 技能（`SKILL.md` 目录），
+让 AI 编码助手（VS Code / GitHub Copilot、Claude Code、Codex、Gemini CLI、
+OpenCode 等）自动学会如何正确安装与使用 `m3u8dl`：`--json` 输出契约、断点
+续传、全部参数与故障排查。兼容的 Agent 打开本仓库时会**自动发现**该技能，
+也可在对话中通过 `/m3u8dl` 手动调用。
+
+每个发行版二进制也**内置了该技能**，已安装 `m3u8dl` 即可一键注册：
+
+```bash
+m3u8dl skills list                       # 查看二进制内置的技能
+m3u8dl skills install                    # 安装到 ./.agents/skills/m3u8dl/
+m3u8dl skills install --agent claude     # 安装到 ./.claude/skills/m3u8dl/
+m3u8dl skills install --scope user       # 安装到 ~/.agents/skills/（所有项目共用）
+```
+
+技能源文件位于 [`.agents/skills/m3u8dl/`](.agents/skills/m3u8dl/SKILL.md)（唯一
+事实源）；`.claude/skills/` 为生成镜像（`make skills-sync`）。贡献约定见
+[`AGENTS.md`](AGENTS.md)。
+
+---
+
 ## 示例
 
 ### 续传失败的下载

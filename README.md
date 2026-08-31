@@ -232,6 +232,33 @@ stdout JSON.
 
 ---
 
+## Agent Skills
+
+This repository ships an [Agent Skill](https://agentskills.io) — a
+`SKILL.md` folder that teaches AI coding agents (VS Code / GitHub Copilot,
+Claude Code, Codex, Gemini CLI, OpenCode, …) how to install and drive
+`m3u8dl` correctly: the `--json` contract, resume behavior, every flag, and
+troubleshooting. Compatible agents **discover it automatically** when the
+repo is open, and can load it on demand or via `/m3u8dl` in chat.
+
+Every released binary also **embeds the skill**, so an installed `m3u8dl` can
+register it for you:
+
+```bash
+m3u8dl skills list                       # what the binary bundles
+m3u8dl skills install                    # -> ./.agents/skills/m3u8dl/
+m3u8dl skills install --agent claude     # -> ./.claude/skills/m3u8dl/
+m3u8dl skills install --scope user       # -> ~/.agents/skills/ (all projects)
+```
+
+Sources: canonical skill in
+[`.agents/skills/m3u8dl/`](.agents/skills/m3u8dl/SKILL.md); the
+`.claude/skills/` mirror is generated (`make skills-sync`). See
+[`AGENTS.md`](AGENTS.md#agent-skills-for-users-coding-agents) for authoring
+conventions.
+
+---
+
 ## Examples
 
 ### Resume a failed download

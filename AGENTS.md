@@ -21,6 +21,12 @@ everything into a single `.mp4` using `ffmpeg` (with a built-in fallback).
 - `go.mod` / `go.sum` — module `github.com/dingdayu/m3u8dl`, requires Go 1.27+.
 - `.goreleaser.yml` — release build config (multi-OS binaries).
 - `.github/workflows/` — CI/CD (docs, lint, test, release).
+- `.agents/skills/<name>/` — **canonical Agent Skills** (open standard,
+  https://agentskills.io) that teach *users' coding agents* how to install and
+  drive this tool. `m3u8dl.go` embeds this folder (`go:embed`) so the released
+  binary can distribute it via `m3u8dl skills install/list`. The
+  `.claude/skills/<name>/` tree is a **generated mirror** for Claude Code —
+  regenerate it with `make skills-sync`, never edit it directly.
 - `bin/` — built binaries (gitignored).
 
 ## Build & Test Commands
@@ -29,6 +35,8 @@ everything into a single `.mp4` using `ffmpeg` (with a built-in fallback).
 make build        # lint + build to ./bin/m3u8dl
 make test         # run go test
 make lint         # run golangci-lint
+make skills-sync  # regenerate .claude/skills mirror after editing .agents/skills
+make skills-check # fail if skill mirrors drift (also enforced in CI)
 make install-hooks  # install git hooks via lefthook
 make hooks-run    # run all hooks on all files (like CI)
 make release      # run goreleaser release
@@ -51,6 +59,28 @@ commit ...` (do not leave bypassed).
 - `README.zh.md` — 简体中文 (Simplified Chinese)
 - `llms.txt` — machine-readable quickstart for **users & their agents**
   (install/usage/flags). This file (`AGENTS.md`) covers **development** only.
+
+## Agent Skills (for users' coding agents)
+
+This repo ships a [Agent Skills](https://agentskills.io) skill at
+`.agents/skills/m3u8dl/` so end users' AI coding agents (VS Code/Copilot,
+Claude Code, Codex, Gemini CLI, …) automatically learn how to install and
+drive the tool correctly (`--json` contracts, resume behavior, flags,
+verification). Conventions:
+
+- **Edit only `.agents/skills/<name>/`.** Then run `make skills-sync` to
+  regenerate `.claude/skills/`. CI (`ci.yml`) fails on drift
+  (`scripts/sync-skills.sh --check`), and the pre-commit hygiene hooks apply
+  to skill markdown too.
+- The Go binary embeds `.agents/skills` via `//go:embed`; the `m3u8dl
+  skills install|list` subcommand lets any installed binary (npm, go
+  install, release archive) register the skill into a user's project
+  (`--scope user` for `$HOME`). If you move/rename `.agents/skills`, update
+  both the `go:embed` directive and `scripts/sync-skills.sh`.
+- Keep `SKILL.md` under ~500 lines; push details into `references/*.md`
+  linked from it (progressive disclosure). The frontmatter `description` is
+  the auto-trigger surface: include concrete keywords (m3u8, HLS, resume,
+  ...) or agents won't load it.
 
 ## Code Style & Conventions
 

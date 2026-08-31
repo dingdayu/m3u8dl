@@ -103,6 +103,23 @@ re-running the same command resumes only the missing segments.
 - If a run fails partway, the ts directory is kept — re-running the same command
 	fetches only the missing segments (resume).
 
+## Agent Skill (recommended for coding agents)
+
+This tool ships an [Agent Skill](https://agentskills.io) that teaches coding
+agents (VS Code / GitHub Copilot, Claude Code, Codex, Gemini CLI, …) the full
+workflow: install channels, flag semantics, the JSON contract, resume and
+troubleshooting. Install it once into the user's project (or `$HOME`):
+
+```bash
+m3u8dl skills list                          # what the binary bundles
+m3u8dl skills install                       # -> ./.agents/skills/m3u8dl/
+m3u8dl skills install --agent claude        # -> ./.claude/skills/m3u8dl/
+m3u8dl skills install --scope user          # -> ~/.agents/skills/m3u8dl/
+```
+
+Or read it directly: `.agents/skills/m3u8dl/SKILL.md` in this repo (canonical;
+`.claude/skills/m3u8dl/` is a generated mirror).
+
 ## Key Files
 
 Useful files if you need more detail:
@@ -111,6 +128,9 @@ Useful files if you need more detail:
 - [README.zh.md](README.zh.md) — full documentation (简体中文) + China
   download acceleration guide
 - [LICENSE](LICENSE) — MIT license
+- [.agents/skills/m3u8dl/SKILL.md](.agents/skills/m3u8dl/SKILL.md) — the Agent
+	Skill (auto-discovered by compatible agents, installable via
+	`m3u8dl skills install`)
 
 > Developer-only docs (code style, workflows, contributing): see
 > [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md) — those are
