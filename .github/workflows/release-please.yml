@@ -35,7 +35,7 @@ jobs:
       tag_name: ${{ steps.rp.outputs.tag_name }}
       version: ${{ steps.rp.outputs.version }}
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         id: rp
         # Config comes from release-please-config.json (draft: true) and
         # .release-please-manifest.json at the repo root.
