@@ -10,7 +10,7 @@
 # jsDelivr CDN) can be verified against a release-published, attested file:
 #
 #   curl -fSLO https://github.com/dingdayu/m3u8dl/releases/download/v1.2.3/bin-checksums.txt
-#   curl -fSL -o m3u8dl https://cdn.jsdelivr.net/npm/m3u8dl-linux-x64@1.2.3/bin/m3u8dl
+#   curl -fSL -o m3u8dl https://cdn.jsdelivr.net/npm/@dingdayu/m3u8dl-linux-x64@1.2.3/bin/m3u8dl
 #   sha256sum -c bin-checksums.txt --ignore-missing
 set -euo pipefail
 
@@ -57,7 +57,7 @@ for base in "${!MAP[@]}"; do
     exit 1
   fi
   # Name entries after the jsDelivr path so users can eyeball the mapping.
-  printf '%s  m3u8dl-%s/bin/%s\n' "$(sha256_file "${src}/${binname}")" "$platform" "$binname" >>"$OUT"
+  printf '%s  @dingdayu/m3u8dl-%s/bin/%s\n' "$(sha256_file "${src}/${binname}")" "$platform" "$binname" >>"$OUT"
 done
 
 sort -k2 -o "$OUT" "$OUT"
