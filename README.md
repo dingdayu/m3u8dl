@@ -94,22 +94,38 @@ Supported platforms: `darwin-arm64`, `darwin-x64`, `linux-arm64`,
 
 Release artifacts are **attested** by the build. Verification is simple:
 
-1. **Checksums** — every release has `checksums.txt` (SHA-256):
+1. **Checksums** — every release has `checksums.txt` (SHA-256 of the archives):
 
   ```bash
   sha256sum -c checksums.txt --ignore-missing
   ```
 
-2. **GitHub Artifact Attestations** — archives are attested on GitHub; a
-  single command confirms they were built by this repo's release workflow:
+2. **GitHub Artifact Attestations** — the release **archives** (`.tar.gz` /
+  `.zip`) are attested on GitHub; a single command confirms they were built by
+  this repo's release workflow:
 
   ```bash
   gh attestation verify m3u8dl_v1.0.0_Linux_x86_64.tar.gz --repo dingdayu/m3u8dl
   ```
 
-3. **npm provenance** — npm packages are published with
-  [provenance](https://docs.npmjs.com/generating-provenance-statements);
-  check the "provenance" badge on the package page or:
+3. **Standalone binaries (npm / jsDelivr)** — a bare binary downloaded from
+  jsDelivr (or unpacked from npm) is not an attested artifact. Verify it
+  against `bin-checksums.txt`, which is published on the release and itself
+  attested:
+
+  ```bash
+  curl -fSLO https://github.com/dingdayu/m3u8dl/releases/download/v1.0.0/bin-checksums.txt
+  sha256sum -c bin-checksums.txt --ignore-missing
+  # Optional: prove the manifest itself came from this repo's release build:
+  gh attestation verify bin-checksums.txt --repo dingdayu/m3u8dl
+  ```
+
+4. **npm provenance & self-check** — npm packages are published with
+  [provenance](https://docs.npmjs.com/generating-provenance-statements)
+  (see the badge on the package page, or `npm audit signatures`). In addition,
+  the `m3u8dl` launcher verifies the platform binary's SHA-256 against the
+  digest recorded at pack time **on every run**, and aborts with a clear
+  error if the download was corrupted or tampered with:
 
   ```bash
   npm audit signatures

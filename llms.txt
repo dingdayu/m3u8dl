@@ -61,10 +61,12 @@ The platform binaries are also on jsDelivr:
 ## Verifying releases
 
 Release artifacts are attested a few ways, all verifiable without extra
-tooling beyond `gh`/`npm`: SHA-256 `checksums.txt`, GitHub Artifact
-Attestations (`gh attestation verify <file> --repo dingdayu/m3u8dl`), and npm
-provenance (`npm audit signatures`). Verify before installing; see README.md
-"Verifying downloads".
+tooling beyond `gh`/`npm`: SHA-256 `checksums.txt` for archives,
+`bin-checksums.txt` for standalone binaries (the npm/jsDelivr channel), GitHub
+Artifact Attestations (`gh attestation verify <file> --repo dingdayu/m3u8dl`),
+and npm provenance (`npm audit signatures`). The npm launcher also re-checks
+the platform binary's SHA-256 on every run and aborts on mismatch. Verify
+before installing; see README.md "Verifying downloads".
 
 ## Quick Usage
 
