@@ -214,18 +214,24 @@ func setupRateLimit() error {
 const chunkBytes = 64 * 1024
 
 // throttledReader paces an underlying reader through the shared token bucket:
-// before each (re-chunked) Read it waits until the limiter grants room for
-// len(p) bytes, charging them up front.
+// each (re-chunked) Read charges the limiter only for the bytes actually
+// delivered — short reads (HTTP/2 frames, network fragmentation) would
+// otherwise over-draw the bucket and drag throughput below the limit.
 type throttledReader struct{ r io.Reader }
 
 func (t *throttledReader) Read(p []byte) (int, error) {
 	if len(p) > chunkBytes {
 		p = p[:chunkBytes]
 	}
-	if err := rateLimiter.WaitN(context.Background(), len(p)); err != nil {
-		return 0, err
+	n, err := t.r.Read(p)
+	if n > 0 {
+		// Blocking before the return paces the caller's next read, so the
+		// aggregate rate still converges to the limit.
+		if werr := rateLimiter.WaitN(context.Background(), n); werr != nil && err == nil {
+			err = werr
+		}
 	}
-	return t.r.Read(p)
+	return n, err
 }
 
 // throttleReads paces r through the shared token bucket; a no-op when
