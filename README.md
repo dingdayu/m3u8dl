@@ -65,15 +65,16 @@ m3u8dl --version
 
 ### Option 0b — npm (Node.js, cross-platform)
 
-`m3u8dl` is also published to **npm** as a meta package that automatically
-selects the right pre-built binary for your OS/arch:
+`m3u8dl` is also published to **npm** as [`@dingdayu/m3u8dl`](https://www.npmjs.com/package/@dingdayu/m3u8dl),
+a meta package that automatically selects the right pre-built binary for your
+OS/arch:
 
 ```bash
 # Global CLI install (puts `m3u8dl` on your PATH)
-npm install -g m3u8dl
+npm install -g @dingdayu/m3u8dl
 
 # Or run once without installing
-npx m3u8dl --url https://example.com/index.m3u8 --json
+npx @dingdayu/m3u8dl --url https://example.com/index.m3u8 --json
 ```
 
 Supported platforms: `darwin-arm64`, `darwin-x64`, `linux-arm64`,
@@ -83,12 +84,12 @@ Supported platforms: `darwin-arm64`, `darwin-x64`, `linux-arm64`,
 > [npmmirror.com](https://npmmirror.com) (Alibaba), which is fast in China:
 >
 > ```bash
-> npm install -g m3u8dl --registry=https://registry.npmmirror.com
+> npm install -g @dingdayu/m3u8dl --registry=https://registry.npmmirror.com
 > ```
 >
 > The platform binaries inside the packages are also served by
 > [jsDelivr](https://www.jsdelivr.com/) — a CDN backed by Cloudflare/Fastly —
-> at `https://cdn.jsdelivr.net/npm/m3u8dl-linux-x64@<version>/bin/m3u8dl`.
+> at `https://cdn.jsdelivr.net/npm/@dingdayu/m3u8dl-linux-x64@<version>/bin/m3u8dl`.
 
 ### Verifying downloads (recommended)
 

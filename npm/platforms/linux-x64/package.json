@@ -1,5 +1,5 @@
 {
-  "name": "m3u8dl-linux-x64",
+  "name": "@dingdayu/m3u8dl-linux-x64",
   "version": "0.0.0",
   "description": "m3u8dl binary for Linux x64",
   "license": "MIT",

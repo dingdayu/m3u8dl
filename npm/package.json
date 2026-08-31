@@ -1,5 +1,5 @@
 {
-  "name": "m3u8dl",
+  "name": "@dingdayu/m3u8dl",
   "version": "0.0.0",
   "description": "Multi-threaded m3u8 video downloader written in Go (AES decryption, resume, ad dedup, ffmpeg merge)",
   "license": "MIT",
@@ -28,10 +28,10 @@
     "node": ">=14"
   },
   "optionalDependencies": {
-    "m3u8dl-darwin-arm64": "0.0.0",
-    "m3u8dl-darwin-x64": "0.0.0",
-    "m3u8dl-linux-arm64": "0.0.0",
-    "m3u8dl-linux-x64": "0.0.0",
-    "m3u8dl-win32-x64": "0.0.0"
+    "@dingdayu/m3u8dl-darwin-arm64": "0.0.0",
+    "@dingdayu/m3u8dl-darwin-x64": "0.0.0",
+    "@dingdayu/m3u8dl-linux-arm64": "0.0.0",
+    "@dingdayu/m3u8dl-linux-x64": "0.0.0",
+    "@dingdayu/m3u8dl-win32-x64": "0.0.0"
   }
 }

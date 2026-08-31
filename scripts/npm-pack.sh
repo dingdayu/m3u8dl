@@ -18,9 +18,10 @@
 # Each platform package also records its binary SHA-256 in package.json so the
 # launcher can verify integrity at install/run time.
 #
-# Output (one tarball per package, all at the same <version>):
-#   dist/npm/m3u8dl-<version>.tgz                  (meta launcher)
-#   dist/npm/m3u8dl-<platform>-<version>.tgz       (platform binary packages)
+# Output (one tarball per package, all at the same <version>; npm derives the
+# tarball name from the scoped package name, e.g. dingdayu-m3u8dl-*.tgz):
+#   dist/npm/dingdayu-m3u8dl-<version>.tgz                  (meta launcher)
+#   dist/npm/dingdayu-m3u8dl-<platform>-<version>.tgz       (platform binary packages)
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
@@ -130,9 +131,9 @@ done
 # version — all inside the staging copy, never touching the committed files.
 META_DIR="$(stage_dir meta)"
 for p in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
-  (cd "$META_DIR" && npm pkg set "version=${VERSION}" "optionalDependencies.m3u8dl-${p}=${VERSION}" >/dev/null)
+  (cd "$META_DIR" && npm pkg set "version=${VERSION}" "optionalDependencies.@dingdayu/m3u8dl-${p}=${VERSION}" >/dev/null)
 done
 (cd "$META_DIR" && npm pack --pack-destination "$NPM_OUT" >/dev/null)
-echo "packed meta (m3u8dl)"
+echo "packed meta (@dingdayu/m3u8dl)"
 
 echo "npm packages are in ${NPM_OUT}"

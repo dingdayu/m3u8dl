@@ -16,11 +16,11 @@ const crypto = require('crypto');
 
 // npm platform/arch identifiers used in optionalDependencies package names.
 const PLATFORMS = {
-  'darwin:arm64': 'm3u8dl-darwin-arm64',
-  'darwin:x64': 'm3u8dl-darwin-x64',
-  'linux:arm64': 'm3u8dl-linux-arm64',
-  'linux:x64': 'm3u8dl-linux-x64',
-  'win32:x64': 'm3u8dl-win32-x64',
+  'darwin:arm64': '@dingdayu/m3u8dl-darwin-arm64',
+  'darwin:x64': '@dingdayu/m3u8dl-darwin-x64',
+  'linux:arm64': '@dingdayu/m3u8dl-linux-arm64',
+  'linux:x64': '@dingdayu/m3u8dl-linux-x64',
+  'win32:x64': '@dingdayu/m3u8dl-win32-x64',
 };
 
 const key = `${process.platform}:${process.arch}`;
@@ -46,7 +46,7 @@ try {
 } catch {
   fail(
     `platform package ${pkg} is not installed.\n` +
-      'If you used --no-optional, reinstall without it: npm install m3u8dl'
+      'If you used --no-optional, reinstall without it: npm install @dingdayu/m3u8dl'
   );
 }
 
@@ -71,7 +71,7 @@ if (expected) {
         `  expected sha256: ${expected}\n` +
         `  actual   sha256: ${actual}\n` +
         'The downloaded binary is corrupted or was tampered with.\n' +
-        'Reinstall from a trusted registry: npm install -g m3u8dl',
+        'Reinstall from a trusted registry: npm install -g @dingdayu/m3u8dl',
       65
     );
   }

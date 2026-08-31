@@ -1,5 +1,5 @@
 {
-  "name": "m3u8dl-win32-x64",
+  "name": "@dingdayu/m3u8dl-win32-x64",
   "version": "0.0.0",
   "description": "m3u8dl binary for Windows x64",
   "license": "MIT",
