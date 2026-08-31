@@ -874,16 +874,19 @@ func getM3u8Body(Url string) string {
 // client (connection pooling + HTTP/2); non-2xx is treated as a failure and
 // returns an empty response.
 func get(url string) *http.Response {
-	return doGet(url, "")
+	return doGet(url, "", "")
 }
 
 // newRangeGetter issues a GET with a "Range: bytes=<from>-" header so a
-// partially downloaded .part can be resumed (server answers HTTP 206).
-func newRangeGetter(url string, from int64) *http.Response {
-	return doGet(url, fmt.Sprintf("bytes=%d-", from))
+// partially downloaded .part can be resumed (server answers HTTP 206). When
+// ifRange is non-empty it is sent as If-Range, so a server that detects a
+// changed resource answers 200 (full body, safe restart) instead of a 206
+// tail that would splice into the stale prefix.
+func newRangeGetter(url string, from int64, ifRange string) *http.Response {
+	return doGet(url, fmt.Sprintf("bytes=%d-", from), ifRange)
 }
 
-func doGet(url, rangeHeader string) *http.Response {
+func doGet(url, rangeHeader, ifRange string) *http.Response {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return &http.Response{
@@ -898,6 +901,9 @@ func doGet(url, rangeHeader string) *http.Response {
 	}
 	if rangeHeader != "" {
 		req.Header.Set("Range", rangeHeader)
+	}
+	if ifRange != "" {
+		req.Header.Set("If-Range", ifRange)
 	}
 	res, err := httpClient.Do(req)
 	if err != nil {
@@ -1119,14 +1125,59 @@ func downloadTsFile(ts TsInfo, downloadDir string) bool {
 			// and may be a different resource: never let its bytes mix with
 			// the primary's .part in either direction — clear before the
 			// alternate attempt and again when it fails.
-			os.Remove(currPath + ".part")
+			dropPart(currPath + ".part")
 			if tryDownload(ts.AltUrl, ts.Key, currPath) {
 				return true
 			}
-			os.Remove(currPath + ".part")
+			dropPart(currPath + ".part")
 		}
 	}
 	return false
+}
+
+// partMeta binds a .part to the resource it came from: a later run must not
+// resume partial bytes that belong to a different playlist (same positional
+// segment name, different URL) or to a since-revised object.
+type partMeta struct {
+	url          string
+	etag         string
+	lastModified string
+}
+
+// validator returns the If-Range value: a strong ETag when present (weak
+// validators are not allowed for range validation), else Last-Modified, else
+// "" meaning the server gave us nothing to verify against.
+func (m partMeta) validator() string {
+	if m.etag != "" && !strings.HasPrefix(m.etag, "W/") {
+		return m.etag
+	}
+	return m.lastModified
+}
+
+// writePartMeta records the origin of a fresh .part (its request URL plus any
+// validators the response carried) so resume can verify it later.
+func writePartMeta(metaPath, rawURL string, res *http.Response) {
+	lines := strings.Join([]string{rawURL, res.Header.Get("ETag"), res.Header.Get("Last-Modified")}, "\n")
+	_ = os.WriteFile(metaPath, []byte(lines), 0o666)
+}
+
+// readPartMeta loads the sidecar written by writePartMeta.
+func readPartMeta(metaPath string) (partMeta, bool) {
+	b, err := os.ReadFile(metaPath)
+	if err != nil {
+		return partMeta{}, false
+	}
+	lines := strings.Split(string(b), "\n")
+	if len(lines) != 3 || lines[0] == "" {
+		return partMeta{}, false
+	}
+	return partMeta{url: lines[0], etag: lines[1], lastModified: lines[2]}, true
+}
+
+// dropPart removes a .part together with its meta sidecar.
+func dropPart(partPath string) {
+	os.Remove(partPath)
+	os.Remove(partPath + ".meta")
 }
 
 // tryDownload performs one download attempt and returns whether it succeeded.
@@ -1140,14 +1191,22 @@ func tryDownload(rawURL, key, currPath string) bool {
 
 	var res *http.Response
 	if resumeFrom > 0 {
-		res = newRangeGetter(rawURL, resumeFrom)
-		if res.StatusCode == http.StatusRequestedRangeNotSatisfiable {
-			// Our offset is beyond the resource (stale/corrupt .part): drop it
-			// and fall through to a plain full download.
-			res.Body.Close()
-			os.Remove(partPath)
+		if meta, ok := readPartMeta(partPath + ".meta"); !ok || meta.url != rawURL {
+			// The partial cannot be tied to this URL (no/foreign sidecar):
+			// never splice it into this download, restart from byte zero.
+			dropPart(partPath)
 			resumeFrom = 0
 			res = get(rawURL)
+		} else {
+			res = newRangeGetter(rawURL, resumeFrom, meta.validator())
+			if res.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+				// Our offset is beyond the resource (stale/corrupt .part): drop it
+				// and fall through to a plain full download.
+				res.Body.Close()
+				dropPart(partPath)
+				resumeFrom = 0
+				res = get(rawURL)
+			}
 		}
 	} else {
 		res = get(rawURL)
@@ -1164,7 +1223,7 @@ func tryDownload(rawURL, key, currPath string) bool {
 		res.Body.Close()
 		return false
 	}
-	ok := writeTSFromResponse(res, key, currPath, resumeFrom)
+	ok := writeTSFromResponse(res, key, currPath, resumeFrom, rawURL)
 	res.Body.Close()
 	return ok
 }
@@ -1215,7 +1274,7 @@ func parseContentRange(v string) (start, end, total int64, ok bool) {
 // from scratch. A short/interrupted transfer KEEPS the .part so the next
 // attempt (or the next run of the same command) can resume mid-file; the
 // .part is removed once the segment is finalized or proven unusable.
-func writeTSFromResponse(res *http.Response, key, currPath string, resumeFrom int64) bool {
+func writeTSFromResponse(res *http.Response, key, currPath string, resumeFrom int64, rawURL string) bool {
 	partPath := currPath + ".part"
 
 	// Only continue an existing .part when the server truly honoured our
@@ -1249,6 +1308,11 @@ func writeTSFromResponse(res *http.Response, key, currPath string, resumeFrom in
 		out.Close()
 		return false
 	}
+	if seek == 0 {
+		// The .part restarts from this response, so it now belongs to this
+		// URL/validators; record them for the next resume verification.
+		writePartMeta(partPath+".meta", rawURL, res)
+	}
 
 	written, err := io.Copy(out, throttleReads(res.Body, res.Request.Context()))
 	if cerr := out.Close(); err == nil {
@@ -1256,7 +1320,7 @@ func writeTSFromResponse(res *http.Response, key, currPath string, resumeFrom in
 	}
 	if err != nil || (written == 0 && seek == 0) {
 		if written == 0 {
-			os.Remove(partPath) // nothing was landed, no point keeping an empty .part
+			dropPart(partPath) // nothing was landed, no point keeping an empty .part
 		}
 		return false
 	}
@@ -1286,10 +1350,10 @@ func writeTSFromResponse(res *http.Response, key, currPath string, resumeFrom in
 		decErr = stripLeadingJunkFile(partPath, currPath)
 	}
 	if decErr != nil {
-		os.Remove(partPath) // bytes unusable (bad key/corrupt): restart clean
+		dropPart(partPath) // bytes unusable (bad key/corrupt): restart clean
 		return false
 	}
-	os.Remove(partPath) // segment landed successfully
+	dropPart(partPath) // segment landed successfully
 	return true
 }
 

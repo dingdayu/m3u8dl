@@ -292,6 +292,11 @@ func TestRangeResumeStalePartRecoversVia416(t *testing.T) {
 	if err := os.WriteFile(stale, bytes.Repeat([]byte{0xFF}, 60000), 0o666); err != nil {
 		t.Fatal(err)
 	}
+	// A matching sidecar lets the resume proceed far enough to hit the 416.
+	if err := os.WriteFile(stale+".meta",
+		[]byte(srv.URL+"/00001.ts\n\n"), 0o666); err != nil {
+		t.Fatal(err)
+	}
 
 	// .part (60000) exceeds the resource (50000): the server answers 416,
 	// the client must drop the .part and redownload from scratch.
@@ -322,6 +327,10 @@ func TestRangeResumeHonorsCapped206(t *testing.T) {
 	curr := filepath.Join(dir, "00001.ts")
 	part := curr + ".part"
 	if err := os.WriteFile(part, data[:10000], 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(part+".meta",
+		[]byte(srv.URL+"/00001.ts\n\n"), 0o666); err != nil {
 		t.Fatal(err)
 	}
 
@@ -449,6 +458,129 @@ func TestRangeResumeRejectsUnusable206(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A .part left by another run is only resumed when its sidecar ties it to the
+// same URL; a foreign or missing sidecar makes the partial unverifiable and
+// it must be discarded instead of spliced into this download.
+func TestPartMetaBindsPartialToURL(t *testing.T) {
+	withRestoredGlobals(t)
+	data := resumeBody(50000)
+	var noTrunc atomic.Bool
+	srv := newFlakyRangeServer(t, data, &noTrunc, nil)
+	defer srv.Close()
+
+	cases := map[string]string{
+		"foreign sidecar": srv.URL + "/other-playlist/00001.ts",
+		"missing sidecar": "",
+	}
+	for name, metaURL := range cases {
+		t.Run(name, func(t *testing.T) {
+			withRestoredGlobals(t)
+			dir := t.TempDir()
+			curr := filepath.Join(dir, "00001.ts")
+			if err := os.WriteFile(curr+".part", data[:20000], 0o666); err != nil {
+				t.Fatal(err)
+			}
+			if metaURL != "" {
+				if err := os.WriteFile(curr+".part.meta", []byte(metaURL+"\n\n"), 0o666); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if !tryDownload(srv.URL+"/00001.ts", "", curr) {
+				t.Fatal("unverifiable partial must be discarded and refetched whole")
+			}
+			got, err := os.ReadFile(curr)
+			if err != nil {
+				t.Fatalf("read finalized segment: %v", err)
+			}
+			if !bytes.Equal(got, data) {
+				t.Fatal("finalized content differs from the served body")
+			}
+		})
+	}
+}
+
+// When the server provides validators, the resume sends them as If-Range: a
+// matching validator resumes mid-file (206), a stale one makes the server
+// answer 200 and the segment restarts from byte zero.
+func TestResumeValidatesPartialWithIfRange(t *testing.T) {
+	withRestoredGlobals(t)
+	data := resumeBody(50000)
+	const etag = `"v1"`
+	total := int64(len(data))
+
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("ETag", etag)
+			if rg := r.Header.Get("Range"); rg != "" {
+				var start int64
+				if _, err := fmt.Sscanf(rg, "bytes=%d-", &start); err != nil {
+					http.Error(w, "bad range", http.StatusBadRequest)
+					return
+				}
+				if r.Header.Get("If-Range") != etag {
+					// Resource changed since the partial was written: full body.
+					w.Header().Set("Content-Length", fmt.Sprintf("%d", total))
+					_, _ = w.Write(data)
+					return
+				}
+				w.Header().Set("Content-Range",
+					fmt.Sprintf("bytes %d-%d/%d", start, total-1, total))
+				w.Header().Set("Content-Length", fmt.Sprintf("%d", total-start))
+				w.WriteHeader(http.StatusPartialContent)
+				_, _ = w.Write(data[start:])
+				return
+			}
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", total))
+			_, _ = w.Write(data)
+		}))
+	defer srv.Close()
+
+	seed := func(t *testing.T, metaETag string) string {
+		t.Helper()
+		dir := t.TempDir()
+		curr := filepath.Join(dir, "00001.ts")
+		if err := os.WriteFile(curr+".part", data[:20000], 0o666); err != nil {
+			t.Fatal(err)
+		}
+		meta := srv.URL + "/00001.ts\n" + metaETag + "\n"
+		if err := os.WriteFile(curr+".part.meta", []byte(meta), 0o666); err != nil {
+			t.Fatal(err)
+		}
+		return curr
+	}
+
+	t.Run("matching validator resumes", func(t *testing.T) {
+		withRestoredGlobals(t)
+		curr := seed(t, etag)
+		if !tryDownload(srv.URL+"/00001.ts", "", curr) {
+			t.Fatal("matching If-Range must resume and complete")
+		}
+		got, err := os.ReadFile(curr)
+		if err != nil {
+			t.Fatalf("read finalized segment: %v", err)
+		}
+		if !bytes.Equal(got, data) {
+			t.Fatal("finalized content differs from the served body")
+		}
+	})
+
+	t.Run("stale validator restarts", func(t *testing.T) {
+		withRestoredGlobals(t)
+		curr := seed(t, `"v0"`)
+		if !tryDownload(srv.URL+"/00001.ts", "", curr) {
+			t.Fatal("stale If-Range must fall back to a full download")
+		}
+		got, err := os.ReadFile(curr)
+		if err != nil {
+			t.Fatalf("read finalized segment: %v", err)
+		}
+		if !bytes.Equal(got, data) {
+			t.Fatal("finalized content differs from the served body")
+		}
+	})
 }
 
 func TestThrottleReadsPacesThroughput(t *testing.T) {
