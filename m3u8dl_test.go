@@ -123,6 +123,18 @@ func TestSetupRateLimit(t *testing.T) {
 	if limit := float64(rateLimiter.Limit()); limit != 2<<20 {
 		t.Fatalf("limiter rate = %v/s, want %v/s", limit, float64(2<<20))
 	}
+	if burst := rateLimiter.Burst(); burst != maxBurstBytes {
+		t.Fatalf("2M burst = %d, want capped %d", burst, maxBurstBytes)
+	}
+
+	// A low cap gets ~one second of budget as burst, not the fixed 256 KiB.
+	opts.rateLimit = "1K"
+	if err := setupRateLimit(); err != nil {
+		t.Fatalf("setupRateLimit(1K): %v", err)
+	}
+	if burst := rateLimiter.Burst(); burst != 1024 {
+		t.Fatalf("1K burst = %d, want 1024", burst)
+	}
 
 	opts.rateLimit = "bogus"
 	rateLimiter = nil
@@ -599,12 +611,12 @@ func TestThrottleReadsPacesThroughput(t *testing.T) {
 	if n != size {
 		t.Fatalf("read %d bytes, want %d", n, size)
 	}
-	// Theory: the full 256 KiB burst flows immediately, the remaining
-	// 344 KiB drains at 200 KiB/s => ~1.7s. The floor is deliberately
+	// Theory: burst = min(256KiB, rate) = 200 KiB flows immediately, the
+	// remaining 400 KiB drains at 200 KiB/s => ~2s. The floor is deliberately
 	// loose (1.2s) so slow/raced CI cannot flake, while an unthrottled
 	// regression (local copy: <10ms) would blow through it.
 	if elapsed < 1200*time.Millisecond {
-		t.Errorf("600KiB at 200KiB/s took %v; expected roughly 1.7s", elapsed)
+		t.Errorf("600KiB at 200KiB/s took %v; expected roughly 2s", elapsed)
 	}
 }
 

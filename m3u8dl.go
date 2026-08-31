@@ -153,8 +153,8 @@ func applyRequestConfig() {
 // goroutines when --rate-limit is set; nil means unlimited.
 var rateLimiter *rate.Limiter
 
-// maxBurstBytes is the token-bucket burst size (a few chunks' worth) so the
-// limiter stays responsive while enforcing the average bytes/second rate.
+// maxBurstBytes caps the token-bucket burst; the effective burst is
+// min(maxBurstBytes, rate) — roughly one second of the configured budget.
 const maxBurstBytes = 256 * 1024
 
 // parseRateLimit converts a --rate-limit value such as "2M", "500KB", "1.5M"
@@ -203,14 +203,16 @@ func setupRateLimit() error {
 		return failCode(1, "%v", err)
 	}
 	if bps > 0 {
-		rateLimiter = rate.NewLimiter(rate.Limit(bps), maxBurstBytes)
+		// Burst ≈ one second of budget (capped): a fixed large burst would let
+		// a low cap like 1K run unthrottled for minutes before pacing starts.
+		rateLimiter = rate.NewLimiter(rate.Limit(bps), int(min(int64(maxBurstBytes), bps)))
 	}
 	return nil
 }
 
 // chunkBytes is the granularity of rate accounting: each read consumes at
 // most this many tokens up front. Smaller paces more smoothly, larger
-// reduces limiter calls. It must stay <= the limiter burst (maxBurstBytes).
+// reduces limiter calls. The effective chunk never exceeds the limiter burst.
 const chunkBytes = 64 * 1024
 
 // throttledReader paces an underlying reader through the shared token bucket:
@@ -218,13 +220,14 @@ const chunkBytes = 64 * 1024
 // delivered — short reads (HTTP/2 frames, network fragmentation) would
 // otherwise over-draw the bucket and drag throughput below the limit.
 type throttledReader struct {
-	r   io.Reader
-	ctx context.Context
+	r     io.Reader
+	ctx   context.Context
+	chunk int
 }
 
 func (t *throttledReader) Read(p []byte) (int, error) {
-	if len(p) > chunkBytes {
-		p = p[:chunkBytes]
+	if len(p) > t.chunk {
+		p = p[:t.chunk]
 	}
 	n, err := t.r.Read(p)
 	if n > 0 {
@@ -246,7 +249,8 @@ func throttleReads(r io.Reader, ctx context.Context) io.Reader {
 	if rateLimiter == nil {
 		return r
 	}
-	return &throttledReader{r: r, ctx: ctx}
+	// WaitN rejects a charge above the burst, so the read chunk never exceeds it.
+	return &throttledReader{r: r, ctx: ctx, chunk: min(chunkBytes, rateLimiter.Burst())}
 }
 
 // The global HTTP request config, read directly by get() (keeps old logic).
