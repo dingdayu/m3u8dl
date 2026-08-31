@@ -1,48 +1,50 @@
-# Release workflow: triggered by pushing a version tag (e.g. v1.2.3).
-# Builds cross-platform binaries with goreleaser and creates a GitHub Release.
+# Release workflow: single-build + publish, driven by release-please.
+#
+# Triggered by every push to main. It first calls the reusable
+# .github/workflows/release-please.yml workflow, which keeps a release PR up
+# to date and — when that PR is merged — creates a DRAFT GitHub release +
+# tag. If a release was created, the build job below compiles the tagged
+# commit ONCE (goreleaser --skip=publish), attests the artifacts, packs &
+# publishes npm from the same dist/, and finally publishes the draft release
+# with `gh`, uploading exactly the attested bytes.
+#
+# Everything is built exactly once, so the npm packages, bin-checksums.txt,
+# the GitHub archives and the attestations all describe the same bytes — no
+# rebuild, no cross-channel checksum drift. Any failure before the final
+# `gh release edit --draft=false` leaves the release as a draft (invisible
+# to users), so a tag can never be half-published.
 name: release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: write # releases, tags
+  id-token: write # npm trusted publishing (OIDC) + sigstore
+  attestations: write # GitHub artifact attestations
 
 jobs:
-  # Detect whether the npm channel is configured, purely from the presence of
-  # the NPM_TOKEN secret (no repo variable to keep in sync). Secrets cannot be
-  # read in step-level `if:` conditions, so this check runs in its own job.
-  npm-config:
-    name: Check npm publish configuration
-    runs-on: ubuntu-latest
-    outputs:
-      enabled: ${{ steps.check.outputs.enabled }}
-    steps:
-      - name: Detect NPM_TOKEN
-        id: check
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [[ -n "${NPM_TOKEN:-}" ]]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::NPM_TOKEN secret not set — skipping the npm channel for this release."
-          fi
+  # Run release-please (defined in its own workflow file) and read its
+  # outputs to learn whether a release was created and at which tag.
+  release-please:
+    uses: ./.github/workflows/release-please.yml
 
-  goreleaser:
-    name: Release binaries
+  build:
+    name: Build, attest & publish
     runs-on: ubuntu-latest
-    needs: npm-config
+    needs: [release-please]
+    if: needs.release-please.outputs.release_created == 'true'
+    env:
+      TAG: ${{ needs.release-please.outputs.tag_name }}
+      VERSION: ${{ needs.release-please.outputs.version }}
     steps:
-      - name: Checkout
+      - name: Checkout (at release tag)
         uses: actions/checkout@v7
         with:
-          fetch-depth: 0 # required by goreleaser for full changelog
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          fetch-depth: 0 # required by goreleaser for git metadata
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -55,44 +57,32 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22.x"
+          # Node 24 bundles npm >= 11.5.1, required for trusted publishing.
+          node-version: "24.x"
           registry-url: "https://registry.npmjs.org"
 
-      # Snapshot build (no publish) to produce the dist/ binaries, then pack
-      # the npm tarballs before the real release so a packaging failure aborts
-      # the release instead of leaving a half-published tag.
       # Goreleaser shells out to the syft binary for the sboms section in
       # .goreleaser.yml; the goreleaser-action does not install it.
       - name: Install syft (SBOM generator)
         uses: anchore/sbom-action/download-syft@v0.20.6
 
-      - name: Build binaries (goreleaser snapshot)
+      # Build + archive + checksums + SBOMs exactly ONCE. --skip=publish
+      # keeps everything in dist/ and creates no GitHub release of its own.
+      - name: Build all artifacts (goreleaser, no publish)
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: latest
-          args: release --snapshot --clean
+          args: release --clean --skip=publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Raw-binary SHA-256 manifest for the npm/jsDelivr channel, built from
+      # the same dist/ binaries.
       - name: Record raw-binary checksums (bin-checksums.txt)
         run: scripts/bin-checksums.sh
 
-      - name: Upload bin-checksums.txt to the release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/bin-checksums.txt --clobber
-
-      - name: Pack npm packages
-        if: needs.npm-config.outputs.enabled == 'true'
-        run: scripts/npm-pack.sh "${GITHUB_REF_NAME#v}"
-
-      - name: Publish to npm
-        if: needs.npm-config.outputs.enabled == 'true'
-        run: scripts/npm-publish.sh "${GITHUB_REF_NAME#v}"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
+      # Attest the exact bytes that will be uploaded later.
       - name: Attest archive artifacts (.tar.gz / .zip)
         uses: actions/attest@v4
         with:
@@ -107,13 +97,24 @@ jobs:
             dist/checksums.txt
             dist/bin-checksums.txt
 
-      # The real release publishes the same binaries; dist/ (incl. the staged
-      # npm tarballs) is left untouched.
-      - name: Run GoReleaser (publish GitHub release)
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          distribution: goreleaser
-          version: latest
-          args: release
+      # npm is published from the same dist/ binaries via trusted publishing
+      # (OIDC): no long-lived npm token, provenance is automatic. A failure
+      # here aborts the run while the GitHub release is still a draft —
+      # nothing is half-published.
+      - name: Pack npm packages
+        run: scripts/npm-pack.sh "$VERSION"
+
+      - name: Publish to npm
+        run: scripts/npm-publish.sh "$VERSION"
+
+      # Everything succeeded: upload exactly the attested artifacts to the
+      # draft release and flip it to published. This is the only step that
+      # makes the release public, so it runs last.
+      - name: Publish GitHub release (upload artifacts, undraft)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$TAG" --clobber \
+            dist/*.tar.gz dist/*.zip dist/*.sbom.json \
+            dist/checksums.txt dist/bin-checksums.txt
+          gh release edit "$TAG" --draft=false

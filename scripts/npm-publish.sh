@@ -4,9 +4,11 @@
 # Usage: scripts/npm-publish.sh <version>
 #   <version>  Semver version without the leading "v" (e.g. 1.2.3).
 #
-# Publishes every tarball produced by scripts/npm-pack.sh with --provenance
-# (requires npm >= 9.5 and an id-token-capable CI environment; the release
-# workflow already grants id-token: write).
+# Publishes every tarball produced by scripts/npm-pack.sh via npm **trusted
+# publishing** (OIDC). No long-lived npm token is used: the release workflow
+# grants `id-token: write`, and npm (>= 11.5.1, bundled with the workflow's
+# Node) automatically signs a provenance attestation from the OIDC identity —
+# so there is intentionally no `--provenance` flag and no NODE_AUTH_TOKEN.
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
@@ -39,8 +41,17 @@ if [[ ${#tarballs[@]} -ne 6 ]]; then
 fi
 
 for tgz in "${tarballs[@]}"; do
+  # Resolve the real package name from inside the tarball, and skip it if this
+  # version is already on the registry (makes re-runs after a partial
+  # failure idempotent).
+  pkg_name="$(tar -xzOf "$tgz" package/package.json | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).name))')"
+  if npm view "${pkg_name}@${VERSION}" version >/dev/null 2>&1; then
+    echo "skipping ${pkg_name}@${VERSION} (already published)"
+    continue
+  fi
   echo "publishing $(basename "$tgz")"
-  npm publish "$tgz" --access public --provenance
+  # Trusted publishing: no token, provenance is automatic.
+  npm publish "$tgz" --access public
 done
 
-echo "published m3u8dl ${VERSION} to npm"
+echo "published @dingdayu/m3u8dl ${VERSION} to npm"

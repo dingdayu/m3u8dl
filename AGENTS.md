@@ -101,8 +101,19 @@ and revert.
 - `main` is the default; merge only via reviewed PRs.
 - Use [Conventional Commits](CONTRIBUTING.md#commit-messages) so releases and
   changelogs are generated cleanly.
-- Releases are cut by tagging (`v1.2.3`) and published by goreleaser via the
-  `release` workflow — do not manually edit `dist/` or commit binaries.
+- Releases are automated by [release-please](.github/workflows/release-please.yml):
+  every merge to `main` updates a release PR (version bump + CHANGELOG.md).
+  Merging that PR creates a **draft** release + tag, which triggers
+  [.github/workflows/release.yml](.github/workflows/release.yml) to build the
+  artifacts once (goreleaser `--skip=publish`), attest them, publish to npm,
+  and finally publish the draft with the binaries attached. Do not manually
+  push `v*` tags, edit `dist/`, or commit binaries — and do not hand-edit the
+  release-please sections of `CHANGELOG.md`.
+- npm publishing uses [trusted publishing (OIDC)](https://docs.npmjs.com/trusted-publishers):
+  the workflow grants `id-token: write` and npm signs a provenance
+  attestation automatically, so there is **no `NPM_TOKEN` secret** and no
+  `--provenance` flag. Each package must be linked to this repo/workflow on
+  npmjs.com (Trusted Publishers setting).
 
 ## Open-Source Collaboration & Code Review
 
