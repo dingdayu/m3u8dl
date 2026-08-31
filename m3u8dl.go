@@ -13,6 +13,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/md5"
@@ -39,6 +40,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/time/rate"
 )
 
 // Agent Skills (https://agentskills.io) bundled into the binary so users can
@@ -104,8 +106,9 @@ type runOptions struct {
 	headers     []string
 	purgeDup    bool
 	insecure    bool
-	autoClean   bool // whether to remove the ts directory after a successful merge
-	jsonOut     bool // output machine-parsable JSON result
+	autoClean   bool   // whether to remove the ts directory after a successful merge
+	jsonOut     bool   // output machine-parsable JSON result
+	rateLimit   string // aggregate speed limit, e.g. "2M" / "500KB" / "2" (bytes/s); empty = unlimited
 }
 
 // opts is the runtime singleton config, filled once at the start of runE.
@@ -141,6 +144,90 @@ func applyRequestConfig() {
 		Timeout:   reqTimeout,
 		Transport: newTransport(insecureSkipVerify),
 	}
+}
+
+// rateLimiter throttles the aggregate download speed across all worker
+// goroutines when --rate-limit is set; nil means unlimited.
+var rateLimiter *rate.Limiter
+
+// maxBurstBytes is the token-bucket burst size (a few chunks' worth) so the
+// limiter stays responsive while enforcing the average bytes/second rate.
+const maxBurstBytes = 256 * 1024
+
+// parseRateLimit converts a --rate-limit value such as "2M", "500KB", "1.5M"
+// or a plain "200000" into bytes per second. Multipliers are 1024-based
+// (K/KB, M/MB, G/GB), case-insensitive. Returns an error for invalid input.
+func parseRateLimit(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	upper := strings.ToUpper(s)
+	mult := int64(1)
+	for _, u := range []struct {
+		suffix string
+		m      int64
+	}{
+		{"GB", 1 << 30}, {"G", 1 << 30},
+		{"MB", 1 << 20}, {"M", 1 << 20},
+		{"KB", 1 << 10}, {"K", 1 << 10},
+	} {
+		if strings.HasSuffix(upper, u.suffix) {
+			mult = u.m
+			s = strings.TrimSpace(s[:len(s)-len(u.suffix)])
+			break
+		}
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || f <= 0 {
+		return 0, fmt.Errorf("无效的限速值 %q（示例：2M、500KB、200000）", s)
+	}
+	bps := int64(f * float64(mult))
+	if bps < 1024 {
+		bps = 1024 // keep at least a sane floor so downloads still progress
+	}
+	return bps, nil
+}
+
+// setupRateLimit parses opts.rateLimit once at startup (shared by all workers).
+func setupRateLimit() error {
+	bps, err := parseRateLimit(opts.rateLimit)
+	if err != nil {
+		return failCode(1, "%v", err)
+	}
+	if bps > 0 {
+		rateLimiter = rate.NewLimiter(rate.Limit(bps), maxBurstBytes)
+	}
+	return nil
+}
+
+// chunkBytes is the granularity of rate accounting: each read consumes at
+// most this many tokens up front. Smaller paces more smoothly, larger
+// reduces limiter calls. It must stay <= the limiter burst (maxBurstBytes).
+const chunkBytes = 64 * 1024
+
+// throttledReader paces an underlying reader through the shared token bucket:
+// before each (re-chunked) Read it waits until the limiter grants room for
+// len(p) bytes, charging them up front.
+type throttledReader struct{ r io.Reader }
+
+func (t *throttledReader) Read(p []byte) (int, error) {
+	if len(p) > chunkBytes {
+		p = p[:chunkBytes]
+	}
+	if err := rateLimiter.WaitN(context.Background(), len(p)); err != nil {
+		return 0, err
+	}
+	return t.r.Read(p)
+}
+
+// throttleReads paces r through the shared token bucket; a no-op when
+// --rate-limit is unset.
+func throttleReads(r io.Reader) io.Reader {
+	if rateLimiter == nil {
+		return r
+	}
+	return &throttledReader{r: r}
 }
 
 // The global HTTP request config, read directly by get() (keeps old logic).
@@ -220,6 +307,7 @@ func newRootCmd() *cobra.Command {
 	f.BoolVarP(&opts.jsonOut, "json", "j", false, "以 JSON 输出结构化结果（利于程序/LLM 解析）")
 	f.StringVarP(&opts.urlListFile, "list", "l", "", "批量下载列表文件（每行一个 m3u8 地址）")
 	f.StringArrayVarP(&opts.headers, "header", "H", nil, "自定义请求头，可重复，格式 \"Key: Value\"")
+	f.StringVar(&opts.rateLimit, "rate-limit", "", "总下载速度上限，如 2M / 500KB / 200000（字节/秒，0 或空=不限速）")
 
 	// Set a custom --version output format using the injected/fallback version.
 	cmd.Version = versionString()
@@ -482,6 +570,9 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	curUA = opts.userAgent
 	insecureSkipVerify = opts.insecure
 	applyRequestConfig()
+	if err := setupRateLimit(); err != nil {
+		return err
+	}
 	if opts.referer == "" {
 		opts.referer = getHost(opts.url, "v2")
 	}
@@ -1109,7 +1200,7 @@ func writeTSFromResponse(res *http.Response, key, currPath string, resumeFrom in
 		return false
 	}
 
-	written, err := io.Copy(out, res.Body)
+	written, err := io.Copy(out, throttleReads(res.Body))
 	if cerr := out.Close(); err == nil {
 		err = cerr
 	}
