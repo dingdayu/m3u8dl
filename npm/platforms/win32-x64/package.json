@@ -15,6 +15,9 @@
     "x64"
   ],
   "files": [
-    "bin"
-  ]
+    "bin",
+    "index.js"
+  ],
+  "main": "index.js",
+  "preferUnplugged": true
 }

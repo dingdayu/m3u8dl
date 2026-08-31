@@ -2,11 +2,17 @@
 // m3u8dl npm launcher: resolves the platform-specific binary package (an
 // optionalDependency) and executes it, forwarding all arguments and the exit
 // code. This keeps each install to a single ~3.7MB binary download.
+//
+// The platform package exposes an index.js that exports the absolute binary
+// path, so resolution works under npm, pnpm and Yarn PnP alike. Before
+// executing, the binary's SHA-256 is checked against the digest recorded in
+// the platform package's package.json ("m3u8dl".binsha256) at pack time, so a
+// corrupted or tampered download fails loudly instead of running.
 'use strict';
 
 const { spawnSync } = require('child_process');
-const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 // npm platform/arch identifiers used in optionalDependencies package names.
 const PLATFORMS = {
@@ -35,10 +41,8 @@ if (!pkg) {
 
 let bin;
 try {
-  const pkgJson = require.resolve(`${pkg}/package.json`);
-  const dir = path.dirname(pkgJson);
-  const name = process.platform === 'win32' ? 'm3u8dl.exe' : 'm3u8dl';
-  bin = path.join(dir, 'bin', name);
+  // The platform package's index.js resolves __dirname-relative paths for us.
+  bin = require(pkg);
 } catch {
   fail(
     `platform package ${pkg} is not installed.\n` +
@@ -46,8 +50,31 @@ try {
   );
 }
 
+// Recorded at pack time by scripts/npm-pack.sh ("m3u8dl".binsha256).
+let expected;
+try {
+  const manifest = require(`${pkg}/package.json`);
+  expected = manifest.m3u8dl && manifest.m3u8dl.binsha256;
+} catch {
+  expected = undefined;
+}
+
 if (!fs.existsSync(bin)) {
   fail(`binary not found: ${bin}`);
+}
+
+if (expected) {
+  const actual = crypto.createHash('sha256').update(fs.readFileSync(bin)).digest('hex');
+  if (actual !== expected) {
+    fail(
+      `integrity check failed for ${bin}\n` +
+        `  expected sha256: ${expected}\n` +
+        `  actual   sha256: ${actual}\n` +
+        'The downloaded binary is corrupted or was tampered with.\n' +
+        'Reinstall from a trusted registry: npm install -g m3u8dl',
+      65
+    );
+  }
 }
 
 const res = spawnSync(bin, process.argv.slice(2), { stdio: 'inherit' });
