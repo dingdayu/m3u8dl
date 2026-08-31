@@ -127,6 +127,9 @@ var httpClient = &http.Client{Transport: newTransport(false)}
 func newTransport(insecure bool) *http.Transport {
 	tc := &tls.Config{InsecureSkipVerify: insecure}
 	return &http.Transport{
+		// Keep honouring HTTP(S)_PROXY/NO_PROXY: a nil Proxy would bypass
+		// the environment entirely (http.DefaultTransport sets this).
+		Proxy:                 http.ProxyFromEnvironment,
 		ForceAttemptHTTP2:     true,
 		TLSClientConfig:       tc,
 		MaxIdleConns:          200,
