@@ -61,6 +61,11 @@ jobs:
       # Snapshot build (no publish) to produce the dist/ binaries, then pack
       # the npm tarballs before the real release so a packaging failure aborts
       # the release instead of leaving a half-published tag.
+      # Goreleaser shells out to the syft binary for the sboms section in
+      # .goreleaser.yml; the goreleaser-action does not install it.
+      - name: Install syft (SBOM generator)
+        uses: anchore/sbom-action/download-syft@v0.20.6
+
       - name: Build binaries (goreleaser snapshot)
         uses: goreleaser/goreleaser-action@v7
         with:
