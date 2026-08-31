@@ -111,6 +111,38 @@ type runOptions struct {
 // opts is the runtime singleton config, filled once at the start of runE.
 var opts runOptions
 
+// httpClient is the package-level shared HTTP client, rebuilt once by
+// applyRequestConfig() whenever the timeout/insecure options change. Sharing
+// one client (and therefore one transport) enables connection pooling and
+// HTTP/2 multiplexing across all segment downloads; creating a fresh
+// http.Transport per request would defeat both.
+var httpClient = &http.Client{Transport: newTransport(false)}
+
+// newTransport builds the shared transport. ForceAttemptHTTP2 is required to
+// keep HTTP/2 negotiation alive when a custom TLSClientConfig is set (Go only
+// auto-enables h2 on the default transport).
+func newTransport(insecure bool) *http.Transport {
+	tc := &tls.Config{InsecureSkipVerify: insecure}
+	return &http.Transport{
+		ForceAttemptHTTP2:     true,
+		TLSClientConfig:       tc,
+		MaxIdleConns:          200,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+}
+
+// applyRequestConfig (re)builds the shared client to reflect the current
+// timeout and insecure settings. Called once at startup from runRoot.
+func applyRequestConfig() {
+	httpClient = &http.Client{
+		Timeout:   reqTimeout,
+		Transport: newTransport(insecureSkipVerify),
+	}
+}
+
 // The global HTTP request config, read directly by get() (keeps old logic).
 var (
 	reqTimeout = 120 * time.Second
@@ -449,6 +481,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	reqTimeout = time.Duration(opts.timeoutSec) * time.Second
 	curUA = opts.userAgent
 	insecureSkipVerify = opts.insecure
+	applyRequestConfig()
 	if opts.referer == "" {
 		opts.referer = getHost(opts.url, "v2")
 	}
@@ -727,9 +760,14 @@ func getM3u8Body(Url string) string {
 	return string(body)
 }
 
-// get sends a GET request with unified UA/headers/timeout; non-2xx is treated as
-// a failure and returns an empty response.
+// get sends a GET request with unified UA/headers/timeout over the shared
+// client (connection pooling + HTTP/2); non-2xx is treated as a failure and
+// returns an empty response.
 func get(url string) *http.Response {
+	return doGet(url, "")
+}
+
+func doGet(url, rangeHeader string) *http.Response {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return &http.Response{
@@ -742,13 +780,10 @@ func get(url string) *http.Response {
 	for k, v := range reqHeaders {
 		req.Header.Set(k, v)
 	}
-	client := &http.Client{Timeout: reqTimeout}
-	if insecureSkipVerify {
-		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
+	if rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
 	}
-	res, err := client.Do(req)
+	res, err := httpClient.Do(req)
 	if err != nil {
 		// Network/DNS errors do not panic: return a failed response with an empty
 		// body so a bad URL only affects itself, not the whole batch or resume flow.
