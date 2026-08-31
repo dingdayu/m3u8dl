@@ -767,6 +767,12 @@ func get(url string) *http.Response {
 	return doGet(url, "")
 }
 
+// newRangeGetter issues a GET with a "Range: bytes=<from>-" header so a
+// partially downloaded .part can be resumed (server answers HTTP 206).
+func newRangeGetter(url string, from int64) *http.Response {
+	return doGet(url, fmt.Sprintf("bytes=%d-", from))
+}
+
 func doGet(url, rangeHeader string) *http.Response {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -991,57 +997,138 @@ func downloadTsFile(ts TsInfo, downloadDir string) bool {
 		return true
 	}
 
-	// One attempt on the primary host
-	if tryDownload(ts.Url, ts.Key, currPath) {
-		return true
-	}
-	// Alternate host (automatic fallback)
-	if ts.AltUrl != "" && ts.AltUrl != ts.Url && tryDownload(ts.AltUrl, ts.Key, currPath) {
-		return true
-	}
-	// Remaining retries on the primary host (permanent failures like 403 won't retry)
-	for i := 1; i < TS_DOWNLOAD_RETRY; i++ {
+	// Retries on the primary host; after the first failure also try the
+	// alternate host once (automatic fallback). Every attempt resumes from the
+	// current .part size via HTTP Range when the server supports it.
+	for i := 0; i < TS_DOWNLOAD_RETRY; i++ {
 		if tryDownload(ts.Url, ts.Key, currPath) {
 			return true
+		}
+		if i == 0 && ts.AltUrl != "" && ts.AltUrl != ts.Url {
+			if tryDownload(ts.AltUrl, ts.Key, currPath) {
+				return true
+			}
 		}
 	}
 	return false
 }
 
 // tryDownload performs one download attempt and returns whether it succeeded.
+// When a .part file from an earlier interrupted attempt exists, the request
+// carries a Range header so only the missing tail is transferred; the server
+// may answer 206 (honoured), 200 (ignores Range -> full re-download) or 416
+// (stale offset -> .part dropped and retried from scratch).
 func tryDownload(rawURL, key, currPath string) bool {
-	res := get(rawURL)
+	partPath := currPath + ".part"
+	resumeFrom := fileSizeOf(partPath)
+
+	var res *http.Response
+	if resumeFrom > 0 {
+		res = newRangeGetter(rawURL, resumeFrom)
+		if res.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			// Our offset is beyond the resource (stale/corrupt .part): drop it
+			// and fall through to a plain full download.
+			res.Body.Close()
+			os.Remove(partPath)
+			resumeFrom = 0
+			res = get(rawURL)
+		}
+	} else {
+		res = get(rawURL)
+	}
 	if res.StatusCode < 200 || res.StatusCode >= 400 {
 		res.Body.Close()
 		return false
 	}
-	ok := writeTSFromResponse(res, key, currPath)
+	ok := writeTSFromResponse(res, key, currPath, resumeFrom)
 	res.Body.Close()
 	return ok
 }
 
+// parseContentRange parses an HTTP Content-Range value like
+// "bytes 200-1073/1234" into its start/end/total parts. total is -1 for "*".
+func parseContentRange(v string) (start, end, total int64, ok bool) {
+	if !strings.HasPrefix(v, "bytes ") {
+		return 0, 0, 0, false
+	}
+	spec := v[len("bytes "):]
+	slash := strings.IndexByte(spec, '/')
+	if slash < 0 {
+		return 0, 0, 0, false
+	}
+	pair := spec[:slash]
+	dash := strings.IndexByte(pair, '-')
+	if dash < 0 {
+		return 0, 0, 0, false
+	}
+	s, err1 := strconv.ParseInt(pair[:dash], 10, 64)
+	e, err2 := strconv.ParseInt(pair[dash+1:], 10, 64)
+	if err1 != nil || err2 != nil {
+		return 0, 0, 0, false
+	}
+	total = -1
+	if t := spec[slash+1:]; t != "*" {
+		tv, err3 := strconv.ParseInt(t, 10, 64)
+		if err3 != nil {
+			return 0, 0, 0, false
+		}
+		total = tv
+	}
+	return s, e, total, true
+}
+
 // writeTSFromResponse writes the cleaned response body to currPath.
-// It lands via a .part temp file: when unencrypted, SyncBytes are stripped
-// streaming-wise to avoid holding everything in memory; on retry failure the
-// .part is cleaned up so partial files never pollute the real one.
-func writeTSFromResponse(res *http.Response, key, currPath string) bool {
+// It lands via a .part temp file: when the response is a 206 that matches the
+// known prefix, the body is appended to resume; otherwise the .part restarts
+// from scratch. A short/interrupted transfer KEEPS the .part so the next
+// attempt (or the next run of the same command) can resume mid-file; the
+// .part is removed once the segment is finalized or proven unusable.
+func writeTSFromResponse(res *http.Response, key, currPath string, resumeFrom int64) bool {
 	partPath := currPath + ".part"
-	out, err := os.Create(partPath)
+
+	// Only continue an existing .part when the server truly honoured our
+	// Range (206 whose start offset equals the bytes we already have).
+	seek := int64(0)
+	if res.StatusCode == http.StatusPartialContent {
+		if start, _, _, ok := parseContentRange(res.Header.Get("Content-Range")); ok && start == resumeFrom {
+			seek = resumeFrom
+		}
+	}
+
+	out, err := os.OpenFile(partPath, os.O_CREATE|os.O_WRONLY, 0o666)
 	if err != nil {
 		return false
 	}
-	defer os.Remove(partPath)
-
-	written, err := io.Copy(out, res.Body)
-	out.Close()
-	if err != nil || written == 0 {
-		return false
-	}
-	// Check length: when Content-Length is trustworthy, a short packet means incomplete
-	if cl := res.Header.Get("Content-Length"); cl != "" {
-		if want, _ := strconv.ParseInt(cl, 10, 64); want > 0 && written < want {
+	if seek > 0 {
+		if _, err := out.Seek(seek, io.SeekStart); err != nil {
+			out.Close()
 			return false
 		}
+	} else if err := out.Truncate(0); err != nil {
+		out.Close()
+		return false
+	}
+
+	written, err := io.Copy(out, res.Body)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil || (written == 0 && seek == 0) {
+		if written == 0 {
+			os.Remove(partPath) // nothing was landed, no point keeping an empty .part
+		}
+		return false
+	}
+	// Check length: when Content-Length is trustworthy, a short packet means
+	// an incomplete body (kept as .part for the next resume attempt).
+	want := seek + written
+	if cl := res.Header.Get("Content-Length"); cl != "" {
+		if body, _ := strconv.ParseInt(cl, 10, 64); body > 0 {
+			want = seek + body
+		}
+	}
+	if got := fileSizeOf(partPath); got < want {
+		return false
 	}
 
 	// Decrypt + strip leading junk
@@ -1051,7 +1138,12 @@ func writeTSFromResponse(res *http.Response, key, currPath string) bool {
 	} else {
 		decErr = stripLeadingJunkFile(partPath, currPath)
 	}
-	return decErr == nil
+	if decErr != nil {
+		os.Remove(partPath) // bytes unusable (bad key/corrupt): restart clean
+		return false
+	}
+	os.Remove(partPath) // segment landed successfully
+	return true
 }
 
 // decryptFileTo decrypts an AES segment (CBC) and writes it to the target file
