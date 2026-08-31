@@ -43,11 +43,15 @@ use one of the options below.
 ### Option 0 — GitHub Release (pre-compiled binaries)
 
 Pre-built binaries are available for **Linux / macOS / Windows** on
-**amd64 / arm64**. Download and unpack, e.g. `v1.0.0` on Linux/amd64:
+**amd64 / arm64**. They are published as archives: `.tar.gz` on Linux/macOS and
+`.zip` on Windows. Archive names follow
+`m3u8dl_<ver>_<OS>_<ARCH>.tar.gz|zip` where `<OS>` is `Linux` / `Darwin` /
+`Windows` and amd64 is named `x86_64`. Download and unpack, e.g. `v1.0.0` on
+Linux/amd64:
 
 ```bash
 curl -fSL -o m3u8dl.tar.gz \
-    "https://github.com/dingdayu/m3u8dl/releases/download/v1.0.0/m3u8dl_v1.0.0_linux_amd64.tar.gz"
+  "https://github.com/dingdayu/m3u8dl/releases/download/v1.0.0/m3u8dl_v1.0.0_Linux_x86_64.tar.gz"
 tar -xzf m3u8dl.tar.gz
 chmod +x m3u8dl
 sudo mv m3u8dl /usr/local/bin/

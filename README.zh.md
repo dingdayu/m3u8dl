@@ -75,21 +75,25 @@ m3u8dl --version   # 先获取最新版本号
 
 # 以 v1.0.0 为例，Linux amd64：
 curl -fSL -o m3u8dl \
-  "https://ghfast.top/https://github.com/dingdayu/m3u8dl/releases/download/v1.0.0/m3u8dl_v1.0.0_linux_amd64.tar.gz"
+  "https://ghfast.top/https://github.com/dingdayu/m3u8dl/releases/download/v1.0.0/m3u8dl_v1.0.0_Linux_x86_64.tar.gz"
 
-tar -xzf m3u8dl_v1.0.0_linux_amd64.tar.gz
+tar -xzf m3u8dl_v1.0.0_Linux_x86_64.tar.gz
 chmod +x m3u8dl
 sudo mv m3u8dl /usr/local/bin/
 ```
 
 > 镜像域名可能变动，请以当前可用者为准；`ghfast.top`、`ghproxy.net` 等均为社区维护的下载加速代理。
 
+> 归档命名说明：Releases 上的档案按 `m3u8dl_<版本>_<OS>_<ARCH>.tar.gz`（Windows 为 `.zip`）
+> 命名，其中 `<OS>` 为 `Linux` / `Darwin` / `Windows`，amd64 写作 `x86_64`。
+> 例如 `m3u8dl_v1.0.0_Linux_x86_64.tar.gz`。
+
 ### 2. 使用 `gh` CLI 与 GitHub 官方加速（`ghproxy`）
 
 若已登录 GitHub 并安装 [gh](https://cli.github.com)，直接用 gh 下载（走官方 API，相对稳定）：
 
 ```bash
-gh release download v1.0.0 --repo dingdayu/m3u8dl --pattern 'm3u8dl_*_linux_amd64.tar.gz'
+gh release download v1.0.0 --repo dingdayu/m3u8dl --pattern 'm3u8dl_*_Linux_x86_64.tar.gz'
 ```
 
 ### 3. 一键脚本示例（Linux/macOS, amd64/arm64）
@@ -110,6 +114,11 @@ case "$ARCH" in
   arm64)  GOARCH="arm64" ;;
   *) echo "Unsupported arch: $ARCH"; exit 1 ;;
 esac
+# goarch of the target machine -> archive arch segment in upload name
+case "$GOARCH" in
+  amd64) ARCH_SEG="x86_64" ;;
+  arm64) ARCH_SEG="arm64" ;;
+esac
 
 if [ "$VERSION" = "latest" ]; then
   VERSION=$(curl -fsSL https://api.github.com/repos/dingdayu/m3u8dl/releases/latest | grep '"tag_name"' | head -1 | sed 's/.*"v\(.*\)",/\1/')
@@ -117,7 +126,7 @@ fi
 
 # 镜像前缀：需可访问 GitHub，可直接写 https://github.com
 MIRROR="https://ghfast.top"
-URL="$MIRROR/https://github.com/dingdayu/m3u8dl/releases/download/v${VERSION}/m3u8dl_v${VERSION}_${OS}_${GOARCH}.tar.gz"
+URL="$MIRROR/https://github.com/dingdayu/m3u8dl/releases/download/v${VERSION}/m3u8dl_v${VERSION}_${OS}_${ARCH_SEG}.tar.gz"
 
 echo "Downloading m3u8dl v${VERSION} (${OS}/${GOARCH}) ..."
 TMP=$(mktemp -d)

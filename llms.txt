@@ -27,7 +27,10 @@ merges them into a single MP4 using system `ffmpeg` (built-in merge fallback).
 ## Install (binaries)
 
 Pre-built binaries (linux/darwin/windows × amd64/arm64) are on the **Releases**
-page. Naming: `m3u8dl_<ver>_<OS>_<ARCH>.tar.gz`.
+page, published as archives: `.tar.gz` on Linux/macOS, `.zip` on Windows.
+Archive naming is `m3u8dl_<ver>_<OS>_<ARCH>.tar.gz` (or `.zip` on Windows)
+where `<OS>` is `Linux` / `Darwin` / `Windows` and amd64 is written as
+`x86_64`. E.g. `m3u8dl_1.2.3_Linux_x86_64.tar.gz`.
 
 For users in China/slow networks, prefix the download URL with a mirror (e.g.
 `https://ghfast.top/`) or see the one-line install script and mirror list in
