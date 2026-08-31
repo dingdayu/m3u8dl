@@ -78,6 +78,14 @@ release-snapshot: ## build a local snapshot with goreleaser (no publish)
 app-version: ## print the current application version (used by release helpers)
 	@echo $(VERSION)
 
+.PHONY: skills-sync
+skills-sync: ## regenerate the .claude/skills mirror from canonical .agents/skills
+	./scripts/sync-skills.sh
+
+.PHONY: skills-check
+skills-check: ## fail if generated skill mirrors drift from .agents/skills
+	./scripts/sync-skills.sh --check
+
 .PHONY: install-hooks
 install-hooks: ## install git hooks via lefthook
 	@command -v lefthook >/dev/null 2>&1 || { \

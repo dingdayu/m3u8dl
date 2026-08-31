@@ -118,6 +118,10 @@ pre-commit:
           fi
         done
 
+    # 8. Agent skill mirrors in sync (.claude/skills generated from .agents/skills)
+    - name: check skill mirrors
+      run: ./scripts/sync-skills.sh --check
+
 commit-msg:
   jobs:
     - name: conventional commits
