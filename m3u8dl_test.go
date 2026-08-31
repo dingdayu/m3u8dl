@@ -352,6 +352,44 @@ func TestRangeResumeHonorsCapped206(t *testing.T) {
 
 // ============================== rate limiting ==============================
 
+// A failed alternate attempt must not leave its partial bytes for the next
+// primary resume: primary and alternate may resolve to different resources,
+// so the primary has to restart from byte zero rather than append its tail
+// to an alternate prefix.
+func TestAlternatePartialNeverSeedsPrimaryResume(t *testing.T) {
+	withRestoredGlobals(t)
+	dataA := resumeBody(50000)
+	dataB := resumeBody(50000)
+	for i := 1; i < len(dataB); i++ {
+		dataB[i] ^= 0x5A // same length, different content from byte 1 on
+	}
+
+	var truncA, truncB atomic.Bool
+	truncA.Store(true)
+	truncB.Store(true)
+	primary := newFlakyRangeServer(t, dataA, &truncA, nil)
+	defer primary.Close()
+	alt := newFlakyRangeServer(t, dataB, &truncB, nil)
+	defer alt.Close()
+
+	dir := t.TempDir()
+	ts := TsInfo{
+		Name:   "00001.ts",
+		Url:    primary.URL + "/00001.ts",
+		AltUrl: alt.URL + "/00001.ts",
+	}
+	if !downloadTsFile(ts, dir) {
+		t.Fatal("download must complete via the primary after both first attempts break")
+	}
+	got, err := os.ReadFile(filepath.Join(dir, ts.Name))
+	if err != nil {
+		t.Fatalf("read finalized segment: %v", err)
+	}
+	if !bytes.Equal(got, dataA) {
+		t.Fatal("finalized segment is not the primary resource (bytes spliced across URLs)")
+	}
+}
+
 func TestThrottleReadsPacesThroughput(t *testing.T) {
 	withRestoredGlobals(t)
 	rateLimiter = rate.NewLimiter(rate.Limit(200*1024), maxBurstBytes)
