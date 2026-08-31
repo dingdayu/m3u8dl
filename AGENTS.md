@@ -22,7 +22,7 @@ everything into a single `.mp4` using `ffmpeg` (with a built-in fallback).
 - `.goreleaser.yml` — release build config (multi-OS binaries).
 - `.github/workflows/` — CI/CD (docs, lint, test, release).
 - `.agents/skills/<name>/` — **canonical Agent Skills** (open standard,
-  https://agentskills.io) that teach *users' coding agents* how to install and
+  https://agentskills.io) that teach _users' coding agents_ how to install and
   drive this tool. `m3u8dl.go` embeds this folder (`go:embed`) so the released
   binary can distribute it via `m3u8dl skills install/list`. The
   `.claude/skills/<name>/` tree is a **generated mirror** for Claude Code —
@@ -73,7 +73,7 @@ verification). Conventions:
   (`scripts/sync-skills.sh --check`), and the pre-commit hygiene hooks apply
   to skill markdown too.
 - The Go binary embeds `.agents/skills` via `//go:embed`; the `m3u8dl
-  skills install|list` subcommand lets any installed binary (npm, go
+skills install|list` subcommand lets any installed binary (npm, go
   install, release archive) register the skill into a user's project
   (`--scope user` for `$HOME`). If you move/rename `.agents/skills`, update
   both the `go:embed` directive and `scripts/sync-skills.sh`.
