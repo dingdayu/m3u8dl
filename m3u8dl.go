@@ -141,10 +141,14 @@ func newTransport(insecure bool) *http.Transport {
 }
 
 // applyRequestConfig (re)builds the shared client to reflect the current
-// timeout and insecure settings. Called once at startup from runRoot.
+// insecure setting. Called once at startup from runRoot. The client carries
+// no global wall-clock Timeout: a low --rate-limit may legitimately take
+// longer than a fixed deadline to drain a segment, so stalls are instead
+// bounded per-read by inactivity (see withInactivityTimeout), which excludes
+// deliberate throttling sleep from the deadline.
 func applyRequestConfig() {
 	httpClient = &http.Client{
-		Timeout:   reqTimeout,
+		Timeout:   0,
 		Transport: newTransport(insecureSkipVerify),
 	}
 }
@@ -251,6 +255,43 @@ func throttleReads(r io.Reader, ctx context.Context) io.Reader {
 	}
 	// WaitN rejects a charge above the burst, so the read chunk never exceeds it.
 	return &throttledReader{r: r, ctx: ctx, chunk: min(chunkBytes, rateLimiter.Burst())}
+}
+
+// withInactivityTimeout bounds each underlying Read by how long it may sit
+// without returning data. It guards only NETWORK inactivity: a throttled
+// download pauses between reads (token-bucket wait, outside this wrapper) so
+// a low --rate-limit keeps working, while a genuinely stalled server is
+// still aborted instead of hanging forever.
+func withInactivityTimeout(r io.Reader, d time.Duration) io.Reader {
+	return &inactivityTimeoutReader{r: r, d: d}
+}
+
+type inactivityTimeoutReader struct {
+	r io.Reader
+	d time.Duration
+}
+
+func (t *inactivityTimeoutReader) Read(p []byte) (int, error) {
+	type result struct {
+		n   int
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		n, err := t.r.Read(p)
+		ch <- result{n, err}
+	}()
+	timer := time.NewTimer(t.d)
+	defer timer.Stop()
+	select {
+	case r := <-ch:
+		return r.n, r.err
+	case <-timer.C:
+		// The underlying read may still be blocked; the caller's Close of the
+		// response body unblocks it, and no further Read is issued on this
+		// buffer after an error, so it is safe to return the timeout now.
+		return 0, fmt.Errorf("download stalled: no data for %s", t.d)
+	}
 }
 
 // The global HTTP request config, read directly by get() (keeps old logic).
@@ -867,7 +908,7 @@ func getHost(Url, ht string) (host string) {
 func getM3u8Body(Url string) string {
 	res := get(Url)
 	defer res.Body.Close()
-	body, err := io.ReadAll(res.Body)
+	body, err := io.ReadAll(withInactivityTimeout(res.Body, reqTimeout))
 	if err != nil {
 		return ""
 	}
@@ -1039,7 +1080,7 @@ func fetchKey(url, altURL string) (string, bool) {
 		res := get(u)
 		if res.StatusCode >= 200 && res.StatusCode < 400 {
 			defer res.Body.Close()
-			b, _ := io.ReadAll(res.Body)
+			b, _ := io.ReadAll(withInactivityTimeout(res.Body, reqTimeout))
 			return string(b), true
 		}
 		res.Body.Close()
@@ -1323,7 +1364,7 @@ func writeTSFromResponse(res *http.Response, key, currPath string, resumeFrom in
 		writePartMeta(partPath+".meta", rawURL, res)
 	}
 
-	written, err := io.Copy(out, throttleReads(res.Body, res.Request.Context()))
+	written, err := io.Copy(out, throttleReads(withInactivityTimeout(res.Body, reqTimeout), res.Request.Context()))
 	if cerr := out.Close(); err == nil {
 		err = cerr
 	}

@@ -19,9 +19,9 @@ import (
 // and restores them after the test so cases cannot contaminate each other.
 func withRestoredGlobals(t *testing.T) {
 	t.Helper()
-	savedOpts, savedClient, savedLimiter := opts, httpClient, rateLimiter
+	savedOpts, savedClient, savedLimiter, savedTimeout := opts, httpClient, rateLimiter, reqTimeout
 	t.Cleanup(func() {
-		opts, httpClient, rateLimiter = savedOpts, savedClient, savedLimiter
+		opts, httpClient, rateLimiter, reqTimeout = savedOpts, savedClient, savedLimiter, savedTimeout
 	})
 }
 
@@ -640,5 +640,62 @@ func TestThrottleReadsNoopWhenUnlimited(t *testing.T) {
 	var want io.Reader = bytes.NewReader([]byte("x"))
 	if got := throttleReads(want, t.Context()); got != want {
 		t.Fatal("without a limiter throttleReads must return the reader as-is")
+	}
+}
+
+// A server that stops mid-body must be aborted by the inactivity guard
+// instead of hanging forever, now that the client no longer has a total
+// wall-clock Timeout.
+func TestInactivityTimeoutAbortsStalledBody(t *testing.T) {
+	withRestoredGlobals(t)
+	reqTimeout = 150 * time.Millisecond
+	data := resumeBody(50000)
+	released := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+			_, _ = w.Write(data[:20000])
+			// Never send the rest; block the handler so the stream stalls
+			// until the test is done, letting srv.Close() return.
+			<-released
+		}))
+	defer func() {
+		close(released)
+		srv.Close()
+	}()
+
+	dir := t.TempDir()
+	curr := filepath.Join(dir, "00001.ts")
+	start := time.Now()
+	if tryDownload(srv.URL+"/00001.ts", "", curr) {
+		t.Fatal("a stalled body must not finalize as a successful segment")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("stalled download took %v; inactivity guard should abort in ~150ms", elapsed)
+	}
+}
+
+// Deliberate throttling sleep is not network inactivity: a segment that
+// needs ~2s to drain at 200 KiB/s must still complete even when the (old)
+// total-deadline equivalent is much shorter than that.
+func TestThrottleTimeExcludedFromDeadline(t *testing.T) {
+	withRestoredGlobals(t)
+	reqTimeout = 400 * time.Millisecond // far shorter than the ~2s throttled drain
+	rateLimiter = rate.NewLimiter(rate.Limit(200*1024), maxBurstBytes)
+	data := resumeBody(600 * 1024)
+	srv := newFlakyRangeServer(t, data, nil, nil)
+	defer srv.Close()
+
+	dir := t.TempDir()
+	curr := filepath.Join(dir, "00001.ts")
+	if !tryDownload(srv.URL+"/00001.ts", "", curr) {
+		t.Fatal("a valid rate limit must not deterministically fail the download")
+	}
+	got, err := os.ReadFile(curr)
+	if err != nil {
+		t.Fatalf("read finalized segment: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatal("finalized content differs from the served body")
 	}
 }
