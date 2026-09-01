@@ -37,5 +37,12 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v5
         id: rp
+        with:
+          # A fine-grained PAT (not GITHUB_TOKEN) is passed here so the
+          # release PR / draft release are attributed to the PAT owner (a real
+          # user), not github-actions[bot]. This lets the release PR's events
+          # trigger CI automatically and avoids the bot-PR workflow-approval
+          # gate. Permissions needed: Contents + Pull requests (read/write).
+          token: ${{ secrets.RELEASE_PLEASE_PAT }}
         # Config comes from release-please-config.json (draft: true) and
         # .release-please-manifest.json at the repo root.
