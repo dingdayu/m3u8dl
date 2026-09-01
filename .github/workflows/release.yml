@@ -35,6 +35,10 @@ jobs:
   # outputs to learn whether a release was created and at which tag.
   release-please:
     uses: ./.github/workflows/release-please.yml
+    # Inherit actions secrets so the callee (release-please.yml) can read
+    # RELEASE_PLEASE_PAT; without this, a reusable workflow gets no caller
+    # secrets and its token input resolves empty.
+    secrets: inherit
 
   build:
     name: Build, attest & publish
