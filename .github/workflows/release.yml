@@ -42,10 +42,13 @@ jobs:
   # outputs to learn whether a release was created and at which tag.
   release-please:
     uses: ./.github/workflows/release-please.yml
-    # Inherit actions secrets so the callee (release-please.yml) can read
-    # RELEASE_PLEASE_PAT; without this, a reusable workflow gets no caller
-    # secrets and its token input resolves empty.
-    secrets: inherit
+    # Reusable workflows receive no caller secrets unless they are mapped
+    # explicitly. Forward only the single secret the callee
+    # (release-please.yml) needs — the fine-grained RELEASE_PLEASE_PAT used
+    # as its token — instead of `secrets: inherit`, which would expose every
+    # present and future repository secret to the callee.
+    secrets:
+      RELEASE_PLEASE_PAT: ${{ secrets.RELEASE_PLEASE_PAT }}
 
   build:
     name: Build, attest & publish
