@@ -24,6 +24,11 @@ permissions:
   contents: write # releases, tags
   id-token: write # npm trusted publishing (OIDC) + sigstore
   attestations: write # GitHub artifact attestations
+  # Required by the reusable release-please.yml (pull-requests: write) so it
+  # can keep the release PR up to date. A caller's permissions block acts as
+  # a ceiling for any reusable workflow it invokes; omitting this would cap
+  # the callee at pull-requests: none and fail workflow validation.
+  pull-requests: write # release PRs
 
 jobs:
   # Run release-please (defined in its own workflow file) and read its
