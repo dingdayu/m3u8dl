@@ -49,11 +49,25 @@ jobs:
       TAG: ${{ needs.release-please.outputs.tag_name }}
       VERSION: ${{ needs.release-please.outputs.version }}
     steps:
-      - name: Checkout (at release tag)
+      - name: Checkout (at release commit)
         uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          # Checkout the commit that this run pushed (which is exactly the
+          # commit release-please tagged its draft release against). We can't
+          # checkout by tag here: with draft:true release-please creates the
+          # draft release + tag_name WITHOUT creating the tag object, so a
+          # `ref: <tag>` would fail ("tag could not be found").
+          ref: ${{ github.sha }}
           fetch-depth: 0 # required by goreleaser for git metadata
+
+      # release-please draft mode never creates the tag object itself; the
+      # git tag is materialized on undraft. Create it up front so the later
+      # `gh release upload "$TAG"` and `gh release edit "$TAG" --draft=false`
+      # steps can resolve it (they address the release by tag name).
+      - name: Create release tag
+        run: git tag "$TAG" && git push origin "$TAG"
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
 
       - name: Set up Go
         uses: actions/setup-go@v7
