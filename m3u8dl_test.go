@@ -551,3 +551,33 @@ func TestInactivityTimeoutAbortsStalledBody(t *testing.T) {
 		t.Fatalf("stalled download took %v; inactivity guard should abort in ~150ms", elapsed)
 	}
 }
+
+// A server that accepts the connection but never sends response headers must
+// be aborted by the transport's ResponseHeaderTimeout: with the client's
+// wall-clock Timeout removed, Do would otherwise block forever and stall the
+// whole wait group.
+func TestResponseHeaderTimeoutAbortsStall(t *testing.T) {
+	withRestoredGlobals(t)
+	reqTimeout = 150 * time.Millisecond
+	applyRequestConfig()
+
+	released := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			<-released // hold the request without ever writing headers
+		}))
+	defer func() {
+		close(released)
+		srv.Close()
+	}()
+
+	start := time.Now()
+	res := get(srv.URL + "/index.m3u8")
+	res.Body.Close()
+	if res.StatusCode != 599 {
+		t.Fatalf("a header-stalled request must fail with 599, got %d", res.StatusCode)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("header stall took %v; ResponseHeaderTimeout should abort in ~150ms", elapsed)
+	}
+}

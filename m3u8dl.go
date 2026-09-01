@@ -25,6 +25,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -127,7 +128,14 @@ func newTransport(insecure bool) *http.Transport {
 	return &http.Transport{
 		// Keep honouring HTTP(S)_PROXY/NO_PROXY: a nil Proxy would bypass
 		// the environment entirely (http.DefaultTransport sets this).
-		Proxy:                 http.ProxyFromEnvironment,
+		Proxy: http.ProxyFromEnvironment,
+		// Bound the connect and response-header phases only: with the client's
+		// wall-clock Timeout removed (see applyRequestConfig), a server that
+		// accepts the connection but never answers would otherwise hang Do
+		// forever. Body reads are guarded separately by inactivity, so a low
+		// --rate-limit is unaffected.
+		DialContext:           (&net.Dialer{Timeout: reqTimeout, KeepAlive: 30 * time.Second}).DialContext,
+		ResponseHeaderTimeout: reqTimeout,
 		ForceAttemptHTTP2:     true,
 		TLSClientConfig:       tc,
 		MaxIdleConns:          200,
