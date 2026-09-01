@@ -8,6 +8,12 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel obsolete in-progress runs for the same PR (or branch push) so only
+# the latest commit for a given ref is validated.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

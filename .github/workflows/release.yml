@@ -20,6 +20,13 @@ on:
     branches:
       - main
 
+# Serialize all release runs under a single stable global group. Never cancel
+# an in-progress release: a partially published release must run to completion
+# (or fail on its own) rather than be aborted mid-publish.
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
 permissions:
   contents: write # releases, tags
   id-token: write # npm trusted publishing (OIDC) + sigstore
