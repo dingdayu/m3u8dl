@@ -64,10 +64,49 @@ jobs:
       # git tag is materialized on undraft. Create it up front so the later
       # `gh release upload "$TAG"` and `gh release edit "$TAG" --draft=false`
       # steps can resolve it (they address the release by tag name).
+      #
+      # Idempotent so this job can be rerun safely after a later release-stage
+      # failure: if the tag already exists on origin it must resolve to this
+      # run's release commit (fail loudly otherwise). An existing tag is
+      # never moved, deleted or force-pushed.
       - name: Create release tag
-        run: git tag "$TAG" && git push origin "$TAG"
         env:
           TAG: ${{ needs.release-please.outputs.tag_name }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          ref="refs/tags/${TAG}"
+
+          # Does the tag already exist on origin?
+          existing_sha="$(git ls-remote origin "${ref}" \
+            | awk -v r="${ref}" '$2 == r { print $1 }')"
+
+          if [ -z "${existing_sha}" ]; then
+            # Not there yet: create it at the release commit and push it.
+            # If a concurrent run created the tag first, this non-force push
+            # is rejected — an existing tag is never replaced.
+            git tag "${TAG}" "${RELEASE_SHA}"
+            git push origin "${ref}"
+            echo "Created and pushed ${ref} at ${RELEASE_SHA}."
+            exit 0
+          fi
+
+          # Tag exists: resolve it to the underlying commit. An annotated tag
+          # peels via ${ref}^{}; a lightweight tag has no peeled entry, in
+          # which case the ref itself already points at the commit.
+          commit_sha="$(git ls-remote origin "${ref}^{}" \
+            | awk -v r="${ref}^{}" '$2 == r { print $1 }')"
+          if [ -z "${commit_sha}" ]; then
+            commit_sha="${existing_sha}"
+          fi
+
+          if [ "${commit_sha}" != "${RELEASE_SHA}" ]; then
+            echo "::error::Tag ${TAG} exists on origin but resolves to ${commit_sha}, not the release commit ${RELEASE_SHA}; refusing to move or replace it."
+            exit 1
+          fi
+
+          echo "Tag ${TAG} already exists on origin and resolves to the release commit ${RELEASE_SHA}; nothing to do."
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
