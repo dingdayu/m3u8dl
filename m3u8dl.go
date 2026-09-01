@@ -881,12 +881,11 @@ func get(url string) *http.Response {
 	return doGet(url, "", "")
 }
 
-// newRangeGetter issues a GET with a "Range: bytes=<from>-" header so a
-// partially downloaded .part can be resumed (server answers HTTP 206). When
-// ifRange is non-empty it is sent as If-Range, so a server that detects a
-// changed resource answers 200 (full body, safe restart) instead of a 206
-// tail that would splice into the stale prefix.
-func newRangeGetter(url string, from int64, ifRange string) *http.Response {
+// getRange issues a GET with a "Range: bytes=<from>-" header (and, when
+// ifRange is non-empty, an If-Range validator) so a partial .part can be
+// resumed: a 206 appends the tail, while a changed resource answers 200
+// (full body, safe restart) instead of a tail that could splice.
+func getRange(url string, from int64, ifRange string) *http.Response {
 	return doGet(url, fmt.Sprintf("bytes=%d-", from), ifRange)
 }
 
@@ -1185,40 +1184,13 @@ func dropPart(partPath string) {
 }
 
 // tryDownload performs one download attempt and returns whether it succeeded.
-// When a .part file from an earlier interrupted attempt exists, the request
-// carries a Range header so only the missing tail is transferred; the server
-// may answer 206 (honoured), 200 (ignores Range -> full re-download) or 416
-// (stale offset -> .part dropped and retried from scratch).
 func tryDownload(rawURL, key, currPath string) bool {
 	partPath := currPath + ".part"
-	resumeFrom := fileSizeOf(partPath)
-
-	var res *http.Response
-	if resumeFrom > 0 {
-		if meta, ok := readPartMeta(partPath + ".meta"); !ok || meta.url != rawURL {
-			// The partial cannot be tied to this URL (no/foreign sidecar):
-			// never splice it into this download, restart from byte zero.
-			dropPart(partPath)
-			resumeFrom = 0
-			res = get(rawURL)
-		} else {
-			res = newRangeGetter(rawURL, resumeFrom, meta.validator())
-			if res.StatusCode == http.StatusRequestedRangeNotSatisfiable {
-				// Our offset is beyond the resource (stale/corrupt .part): drop it
-				// and fall through to a plain full download.
-				res.Body.Close()
-				dropPart(partPath)
-				resumeFrom = 0
-				res = get(rawURL)
-			}
-		}
-	} else {
-		res = get(rawURL)
-	}
-	if res.StatusCode == http.StatusPartialContent && !usableRangeStart(res, resumeFrom) {
+	res, resumeFrom := acquireResponse(rawURL, partPath)
+	if _, _, ok := rangeResume(res, resumeFrom); !ok {
 		// A 206 whose Content-Range is missing/garbled, or starts at neither
-		// our resume offset (append) nor byte zero (safe restart), is a tail
-		// — not the resource. Re-fetch without Range instead of splicing it.
+		// our resume offset nor byte zero, is a tail — not the resource.
+		// Re-fetch without Range instead of splicing it into the segment.
 		res.Body.Close()
 		resumeFrom = 0
 		res = get(rawURL)
@@ -1232,12 +1204,55 @@ func tryDownload(rawURL, key, currPath string) bool {
 	return ok
 }
 
-// usableRangeStart reports whether a 206 response is consumable: its
-// Content-Range must parse and start either at resumeFrom (append the tail)
-// or at zero (the body is the full resource, safe to restart from).
-func usableRangeStart(res *http.Response, resumeFrom int64) bool {
-	start, _, _, ok := parseContentRange(res.Header.Get("Content-Range"))
-	return ok && (start == resumeFrom || start == 0)
+// acquireResponse obtains the response for one download attempt, deciding
+// whether the existing .part can be resumed (Range + If-Range) or must
+// restart whole. It drops a .part that cannot be verified — missing/invalid
+// or URL-mismatched meta, or one without a usable validator — as well as a
+// stale one (416), returning a plain full GET in all of those cases. The
+// returned resumeFrom is non-zero only when a valid resume was attempted.
+func acquireResponse(rawURL, partPath string) (*http.Response, int64) {
+	resumeFrom := fileSizeOf(partPath)
+	if resumeFrom == 0 {
+		return get(rawURL), 0
+	}
+	meta, ok := readPartMeta(partPath + ".meta")
+	v := meta.validator()
+	if !ok || meta.url != rawURL || v == "" {
+		// Without a validator we cannot detect a same-URL revised object,
+		// so an unguarded Range could splice stale prefix bytes. Treat a
+		// partial we cannot bind and verify as garbage, restart whole.
+		dropPart(partPath)
+		return get(rawURL), 0
+	}
+	res := getRange(rawURL, resumeFrom, v)
+	if res.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+		// Our offset is beyond the resource (stale/corrupt .part): drop it
+		// and fall through to a plain full download.
+		res.Body.Close()
+		dropPart(partPath)
+		return get(rawURL), 0
+	}
+	return res, resumeFrom
+}
+
+// rangeResume maps a response onto the existing .part: seek is the write
+// offset to append at (0 = restart from scratch), total is the advertised
+// full resource size from Content-Range (-1 when unknown or not a 206),
+// and ok is false when a 206 is unusable — missing/garbled Content-Range, or
+// a start that matches neither resumeFrom (append the tail) nor zero (the
+// body is the full resource) — in which case it is a tail, not the resource.
+func rangeResume(res *http.Response, resumeFrom int64) (seek, total int64, ok bool) {
+	if res.StatusCode != http.StatusPartialContent {
+		return 0, -1, true // 200 full body: restart from byte zero
+	}
+	start, _, total, ok := parseContentRange(res.Header.Get("Content-Range"))
+	if !ok || (start != resumeFrom && start != 0) {
+		return 0, 0, false
+	}
+	if start == resumeFrom {
+		return resumeFrom, total, true
+	}
+	return 0, total, true
 }
 
 // parseContentRange parses an HTTP Content-Range value like
@@ -1281,22 +1296,12 @@ func parseContentRange(v string) (start, end, total int64, ok bool) {
 func writeTSFromResponse(res *http.Response, key, currPath string, resumeFrom int64, rawURL string) bool {
 	partPath := currPath + ".part"
 
-	// Only continue an existing .part when the server truly honoured our
-	// Range (206 whose start offset equals the bytes we already have).
-	seek := int64(0)
-	rangeTotal := int64(-1)
-	if res.StatusCode == http.StatusPartialContent {
-		if !usableRangeStart(res, resumeFrom) {
-			// The plain re-fetch still answered a broken 206: fail the
-			// attempt loudly instead of landing a tail as the segment.
-			return false
-		}
-		if start, _, total, ok := parseContentRange(res.Header.Get("Content-Range")); ok {
-			if start == resumeFrom {
-				seek = resumeFrom
-			}
-			rangeTotal = total
-		}
+	// Only continue an existing .part when we can map this response onto it
+	// (206 appended at our offset, or a full-body restart); anything else —
+	// including a broken 206 surviving the earlier re-fetch — fails loudly.
+	seek, rangeTotal, ok := rangeResume(res, resumeFrom)
+	if !ok {
+		return false
 	}
 
 	out, err := os.OpenFile(partPath, os.O_CREATE|os.O_WRONLY, 0o666)

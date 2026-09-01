@@ -212,6 +212,7 @@ func newFlakyRangeServer(t *testing.T, data []byte, truncFirst, capNext *atomic.
 	return httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			total := int64(len(data))
+			w.Header().Set("ETag", fmt.Sprintf("\"seg-%d\"", total))
 			if rg := r.Header.Get("Range"); rg != "" {
 				var start int64
 				if _, err := fmt.Sscanf(rg, "bytes=%d-", &start); err != nil {
@@ -304,9 +305,10 @@ func TestRangeResumeStalePartRecoversVia416(t *testing.T) {
 	if err := os.WriteFile(stale, bytes.Repeat([]byte{0xFF}, 60000), 0o666); err != nil {
 		t.Fatal(err)
 	}
-	// A matching sidecar lets the resume proceed far enough to hit the 416.
+	// A matching sidecar (with a validator) lets the resume proceed far enough
+	// to hit the 416.
 	if err := os.WriteFile(stale+".meta",
-		[]byte(srv.URL+"/00001.ts\n\n"), 0o666); err != nil {
+		[]byte(srv.URL+"/00001.ts\n\"stale\"\n"), 0o666); err != nil {
 		t.Fatal(err)
 	}
 
@@ -342,7 +344,7 @@ func TestRangeResumeHonorsCapped206(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(part+".meta",
-		[]byte(srv.URL+"/00001.ts\n\n"), 0o666); err != nil {
+		[]byte(srv.URL+"/00001.ts\n\"part\"\n"), 0o666); err != nil {
 		t.Fatal(err)
 	}
 
@@ -457,6 +459,12 @@ func TestRangeResumeRejectsUnusable206(t *testing.T) {
 			if err := os.WriteFile(curr+".part", data[:20000], 0o666); err != nil {
 				t.Fatal(err)
 			}
+			// A validator lets the resume issue a Range request, so the
+			// unusable-206 re-fetch path is actually exercised.
+			if err := os.WriteFile(curr+".part.meta",
+				[]byte(srv.URL+"/00001.ts\n\"x\"\n"), 0o666); err != nil {
+				t.Fatal(err)
+			}
 
 			if !tryDownload(srv.URL+"/00001.ts", "", curr) {
 				t.Fatal("client must re-fetch from byte zero and complete")
@@ -482,20 +490,26 @@ func TestPartMetaBindsPartialToURL(t *testing.T) {
 	srv := newFlakyRangeServer(t, data, &noTrunc, nil)
 	defer srv.Close()
 
-	cases := map[string]string{
-		"foreign sidecar": srv.URL + "/other-playlist/00001.ts",
-		"missing sidecar": "",
+	cases := []struct {
+		name    string
+		metaURL string
+	}{
+		{"foreign sidecar", srv.URL + "/other-playlist/00001.ts"},
+		{"missing sidecar", ""},
+		// Matching URL but the server gave no validator: the partial is still
+		// unverifiable (a same-URL revised object is undetectable) -> discard.
+		{"same-url no validator", srv.URL + "/00001.ts"},
 	}
-	for name, metaURL := range cases {
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			withRestoredGlobals(t)
 			dir := t.TempDir()
 			curr := filepath.Join(dir, "00001.ts")
 			if err := os.WriteFile(curr+".part", data[:20000], 0o666); err != nil {
 				t.Fatal(err)
 			}
-			if metaURL != "" {
-				if err := os.WriteFile(curr+".part.meta", []byte(metaURL+"\n\n"), 0o666); err != nil {
+			if tc.metaURL != "" {
+				if err := os.WriteFile(curr+".part.meta", []byte(tc.metaURL+"\n\n"), 0o666); err != nil {
 					t.Fatal(err)
 				}
 			}
