@@ -5,10 +5,10 @@
 We provide security updates for the latest release and, where practical, the
 most recent minor release.
 
-| Version | Supported          |
-| ------- | ----------------- |
-| latest  | ✅                |
-| < latest | ❌               |
+| Version  | Supported |
+| -------- | --------- |
+| latest   | ✅        |
+| < latest | ❌        |
 
 ## Reporting a Vulnerability
 

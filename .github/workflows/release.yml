@@ -55,7 +55,7 @@ jobs:
         run: go mod download
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           # Node 24 bundles npm >= 11.5.1, required for trusted publishing.
           node-version: "24.x"
@@ -64,7 +64,7 @@ jobs:
       # Goreleaser shells out to the syft binary for the sboms section in
       # .goreleaser.yml; the goreleaser-action does not install it.
       - name: Install syft (SBOM generator)
-        uses: anchore/sbom-action/download-syft@v0.20.6
+        uses: anchore/sbom-action/download-syft@v0.24.2
 
       # Build + archive + checksums + SBOMs exactly ONCE. --skip=publish
       # keeps everything in dist/ and creates no GitHub release of its own.

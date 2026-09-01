@@ -25,6 +25,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -104,12 +105,96 @@ type runOptions struct {
 	headers     []string
 	purgeDup    bool
 	insecure    bool
-	autoClean   bool // whether to remove the ts directory after a successful merge
-	jsonOut     bool // output machine-parsable JSON result
+	autoClean   bool   // whether to remove the ts directory after a successful merge
+	jsonOut     bool   // output machine-parsable JSON result
+	rateLimit   string // aggregate speed limit, e.g. "2M" / "500KB" / "2" (bytes/s); empty = unlimited
 }
 
 // opts is the runtime singleton config, filled once at the start of runE.
 var opts runOptions
+
+// httpClient is the package-level shared HTTP client, rebuilt once by
+// applyRequestConfig() whenever the timeout/insecure options change. Sharing
+// one client (and therefore one transport) enables connection pooling and
+// HTTP/2 multiplexing across all segment downloads; creating a fresh
+// http.Transport per request would defeat both.
+var httpClient = &http.Client{Transport: newTransport(false)}
+
+// newTransport builds the shared transport. ForceAttemptHTTP2 is required to
+// keep HTTP/2 negotiation alive when a custom TLSClientConfig is set (Go only
+// auto-enables h2 on the default transport).
+func newTransport(insecure bool) *http.Transport {
+	tc := &tls.Config{InsecureSkipVerify: insecure}
+	return &http.Transport{
+		// Keep honouring HTTP(S)_PROXY/NO_PROXY: a nil Proxy would bypass
+		// the environment entirely (http.DefaultTransport sets this).
+		Proxy: http.ProxyFromEnvironment,
+		// Bound the connect and response-header phases only: with the client's
+		// wall-clock Timeout removed (see applyRequestConfig), a server that
+		// accepts the connection but never answers would otherwise hang Do
+		// forever. Body reads are guarded separately by inactivity, so a low
+		// --rate-limit is unaffected.
+		DialContext:           (&net.Dialer{Timeout: reqTimeout, KeepAlive: 30 * time.Second}).DialContext,
+		ResponseHeaderTimeout: reqTimeout,
+		ForceAttemptHTTP2:     true,
+		TLSClientConfig:       tc,
+		MaxIdleConns:          200,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+}
+
+// applyRequestConfig (re)builds the shared client to reflect the current
+// insecure setting. Called once at startup from runRoot. The client carries
+// no global wall-clock Timeout: a low --rate-limit may legitimately take
+// longer than a fixed deadline to drain a segment, so stalls are instead
+// bounded per-read by inactivity (see withInactivityTimeout), which excludes
+// deliberate throttling sleep from the deadline.
+func applyRequestConfig() {
+	httpClient = &http.Client{
+		Timeout:   0,
+		Transport: newTransport(insecureSkipVerify),
+	}
+}
+
+// withInactivityTimeout bounds each underlying Read by how long it may sit
+// without returning data. It guards only NETWORK inactivity: a throttled
+// download pauses between reads (token-bucket wait, outside this wrapper) so
+// a low --rate-limit keeps working, while a genuinely stalled server is
+// still aborted instead of hanging forever.
+func withInactivityTimeout(r io.Reader, d time.Duration) io.Reader {
+	return &inactivityTimeoutReader{r: r, d: d}
+}
+
+type inactivityTimeoutReader struct {
+	r io.Reader
+	d time.Duration
+}
+
+func (t *inactivityTimeoutReader) Read(p []byte) (int, error) {
+	type result struct {
+		n   int
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		n, err := t.r.Read(p)
+		ch <- result{n, err}
+	}()
+	timer := time.NewTimer(t.d)
+	defer timer.Stop()
+	select {
+	case r := <-ch:
+		return r.n, r.err
+	case <-timer.C:
+		// The underlying read may still be blocked; the caller's Close of the
+		// response body unblocks it, and no further Read is issued on this
+		// buffer after an error, so it is safe to return the timeout now.
+		return 0, fmt.Errorf("download stalled: no data for %s", t.d)
+	}
+}
 
 // The global HTTP request config, read directly by get() (keeps old logic).
 var (
@@ -188,6 +273,7 @@ func newRootCmd() *cobra.Command {
 	f.BoolVarP(&opts.jsonOut, "json", "j", false, "以 JSON 输出结构化结果（利于程序/LLM 解析）")
 	f.StringVarP(&opts.urlListFile, "list", "l", "", "批量下载列表文件（每行一个 m3u8 地址）")
 	f.StringArrayVarP(&opts.headers, "header", "H", nil, "自定义请求头，可重复，格式 \"Key: Value\"")
+	f.StringVar(&opts.rateLimit, "rate-limit", "", "总下载速度上限，如 2M / 500KB / 200000（字节/秒，0 或空=不限速）")
 
 	// Set a custom --version output format using the injected/fallback version.
 	cmd.Version = versionString()
@@ -449,6 +535,10 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	reqTimeout = time.Duration(opts.timeoutSec) * time.Second
 	curUA = opts.userAgent
 	insecureSkipVerify = opts.insecure
+	applyRequestConfig()
+	if err := setupRateLimit(); err != nil {
+		return err
+	}
 	if opts.referer == "" {
 		opts.referer = getHost(opts.url, "v2")
 	}
@@ -720,16 +810,29 @@ func getHost(Url, ht string) (host string) {
 func getM3u8Body(Url string) string {
 	res := get(Url)
 	defer res.Body.Close()
-	body, err := io.ReadAll(res.Body)
+	body, err := io.ReadAll(withInactivityTimeout(res.Body, reqTimeout))
 	if err != nil {
 		return ""
 	}
 	return string(body)
 }
 
-// get sends a GET request with unified UA/headers/timeout; non-2xx is treated as
-// a failure and returns an empty response.
+// get sends a GET request with unified UA/headers/timeout over the shared
+// client (connection pooling + HTTP/2); non-2xx is treated as a failure and
+// returns an empty response.
 func get(url string) *http.Response {
+	return doGet(url, "", "")
+}
+
+// getRange issues a GET with a "Range: bytes=<from>-" header (and, when
+// ifRange is non-empty, an If-Range validator) so a partial .part can be
+// resumed: a 206 appends the tail, while a changed resource answers 200
+// (full body, safe restart) instead of a tail that could splice.
+func getRange(url string, from int64, ifRange string) *http.Response {
+	return doGet(url, fmt.Sprintf("bytes=%d-", from), ifRange)
+}
+
+func doGet(url, rangeHeader, ifRange string) *http.Response {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return &http.Response{
@@ -742,13 +845,13 @@ func get(url string) *http.Response {
 	for k, v := range reqHeaders {
 		req.Header.Set(k, v)
 	}
-	client := &http.Client{Timeout: reqTimeout}
-	if insecureSkipVerify {
-		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
+	if rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
 	}
-	res, err := client.Do(req)
+	if ifRange != "" {
+		req.Header.Set("If-Range", ifRange)
+	}
+	res, err := httpClient.Do(req)
 	if err != nil {
 		// Network/DNS errors do not panic: return a failed response with an empty
 		// body so a bad URL only affects itself, not the whole batch or resume flow.
@@ -879,7 +982,7 @@ func fetchKey(url, altURL string) (string, bool) {
 		res := get(u)
 		if res.StatusCode >= 200 && res.StatusCode < 400 {
 			defer res.Body.Close()
-			b, _ := io.ReadAll(res.Body)
+			b, _ := io.ReadAll(withInactivityTimeout(res.Body, reqTimeout))
 			return string(b), true
 		}
 		res.Body.Close()
@@ -956,57 +1059,239 @@ func downloadTsFile(ts TsInfo, downloadDir string) bool {
 		return true
 	}
 
-	// One attempt on the primary host
-	if tryDownload(ts.Url, ts.Key, currPath) {
-		return true
-	}
-	// Alternate host (automatic fallback)
-	if ts.AltUrl != "" && ts.AltUrl != ts.Url && tryDownload(ts.AltUrl, ts.Key, currPath) {
-		return true
-	}
-	// Remaining retries on the primary host (permanent failures like 403 won't retry)
-	for i := 1; i < TS_DOWNLOAD_RETRY; i++ {
+	// Retries on the primary host; after the first failure also try the
+	// alternate host once (automatic fallback). Every attempt resumes from the
+	// current .part size via HTTP Range when the server supports it.
+	for i := 0; i < TS_DOWNLOAD_RETRY; i++ {
 		if tryDownload(ts.Url, ts.Key, currPath) {
 			return true
+		}
+		if i == 0 && ts.AltUrl != "" && ts.AltUrl != ts.Url {
+			// The alternate URL is a different resolution candidate (v1/v2)
+			// and may be a different resource: never let its bytes mix with
+			// the primary's .part in either direction — clear before the
+			// alternate attempt and again when it fails.
+			dropPart(currPath + ".part")
+			if tryDownload(ts.AltUrl, ts.Key, currPath) {
+				return true
+			}
+			dropPart(currPath + ".part")
 		}
 	}
 	return false
 }
 
+// partMeta binds a .part to the resource it came from: a later run must not
+// resume partial bytes that belong to a different playlist (same positional
+// segment name, different URL) or to a since-revised object.
+type partMeta struct {
+	url          string
+	etag         string
+	lastModified string
+}
+
+// validator returns the If-Range value: a strong ETag when present (weak
+// validators are not allowed for range validation), else Last-Modified, else
+// "" meaning the server gave us nothing to verify against.
+func (m partMeta) validator() string {
+	if m.etag != "" && !strings.HasPrefix(m.etag, "W/") {
+		return m.etag
+	}
+	return m.lastModified
+}
+
+// writePartMeta records the origin of a fresh .part (its request URL plus any
+// validators the response carried) so resume can verify it later.
+func writePartMeta(metaPath, rawURL string, res *http.Response) {
+	lines := strings.Join([]string{rawURL, res.Header.Get("ETag"), res.Header.Get("Last-Modified")}, "\n")
+	_ = os.WriteFile(metaPath, []byte(lines), 0o666)
+}
+
+// readPartMeta loads the sidecar written by writePartMeta.
+func readPartMeta(metaPath string) (partMeta, bool) {
+	b, err := os.ReadFile(metaPath)
+	if err != nil {
+		return partMeta{}, false
+	}
+	lines := strings.Split(string(b), "\n")
+	if len(lines) != 3 || lines[0] == "" {
+		return partMeta{}, false
+	}
+	return partMeta{url: lines[0], etag: lines[1], lastModified: lines[2]}, true
+}
+
+// dropPart removes a .part together with its meta sidecar.
+func dropPart(partPath string) {
+	os.Remove(partPath)
+	os.Remove(partPath + ".meta")
+}
+
 // tryDownload performs one download attempt and returns whether it succeeded.
 func tryDownload(rawURL, key, currPath string) bool {
-	res := get(rawURL)
+	partPath := currPath + ".part"
+	res, resumeFrom := acquireResponse(rawURL, partPath)
+	if _, _, ok := rangeResume(res, resumeFrom); !ok {
+		// A 206 whose Content-Range is missing/garbled, or starts at neither
+		// our resume offset nor byte zero, is a tail — not the resource.
+		// Re-fetch without Range instead of splicing it into the segment.
+		res.Body.Close()
+		resumeFrom = 0
+		res = get(rawURL)
+	}
 	if res.StatusCode < 200 || res.StatusCode >= 400 {
 		res.Body.Close()
 		return false
 	}
-	ok := writeTSFromResponse(res, key, currPath)
+	ok := writeTSFromResponse(res, key, currPath, resumeFrom, rawURL)
 	res.Body.Close()
 	return ok
 }
 
+// acquireResponse obtains the response for one download attempt, deciding
+// whether the existing .part can be resumed (Range + If-Range) or must
+// restart whole. It drops a .part that cannot be verified — missing/invalid
+// or URL-mismatched meta, or one without a usable validator — as well as a
+// stale one (416), returning a plain full GET in all of those cases. The
+// returned resumeFrom is non-zero only when a valid resume was attempted.
+func acquireResponse(rawURL, partPath string) (*http.Response, int64) {
+	resumeFrom := fileSizeOf(partPath)
+	if resumeFrom == 0 {
+		return get(rawURL), 0
+	}
+	meta, ok := readPartMeta(partPath + ".meta")
+	v := meta.validator()
+	if !ok || meta.url != rawURL || v == "" {
+		// Without a validator we cannot detect a same-URL revised object,
+		// so an unguarded Range could splice stale prefix bytes. Treat a
+		// partial we cannot bind and verify as garbage, restart whole.
+		dropPart(partPath)
+		return get(rawURL), 0
+	}
+	res := getRange(rawURL, resumeFrom, v)
+	if res.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+		// Our offset is beyond the resource (stale/corrupt .part): drop it
+		// and fall through to a plain full download.
+		res.Body.Close()
+		dropPart(partPath)
+		return get(rawURL), 0
+	}
+	return res, resumeFrom
+}
+
+// rangeResume maps a response onto the existing .part: seek is the write
+// offset to append at (0 = restart from scratch), total is the advertised
+// full resource size from Content-Range (-1 when unknown or not a 206),
+// and ok is false when a 206 is unusable — missing/garbled Content-Range, or
+// a start that matches neither resumeFrom (append the tail) nor zero (the
+// body is the full resource) — in which case it is a tail, not the resource.
+func rangeResume(res *http.Response, resumeFrom int64) (seek, total int64, ok bool) {
+	if res.StatusCode != http.StatusPartialContent {
+		return 0, -1, true // 200 full body: restart from byte zero
+	}
+	start, _, total, ok := parseContentRange(res.Header.Get("Content-Range"))
+	if !ok || (start != resumeFrom && start != 0) {
+		return 0, 0, false
+	}
+	if start == resumeFrom {
+		return resumeFrom, total, true
+	}
+	return 0, total, true
+}
+
+// parseContentRange parses an HTTP Content-Range value like
+// "bytes 200-1073/1234" into its start/end/total parts. total is -1 for "*".
+func parseContentRange(v string) (start, end, total int64, ok bool) {
+	if !strings.HasPrefix(v, "bytes ") {
+		return 0, 0, 0, false
+	}
+	spec := v[len("bytes "):]
+	slash := strings.IndexByte(spec, '/')
+	if slash < 0 {
+		return 0, 0, 0, false
+	}
+	pair := spec[:slash]
+	dash := strings.IndexByte(pair, '-')
+	if dash < 0 {
+		return 0, 0, 0, false
+	}
+	s, err1 := strconv.ParseInt(pair[:dash], 10, 64)
+	e, err2 := strconv.ParseInt(pair[dash+1:], 10, 64)
+	if err1 != nil || err2 != nil {
+		return 0, 0, 0, false
+	}
+	total = -1
+	if t := spec[slash+1:]; t != "*" {
+		tv, err3 := strconv.ParseInt(t, 10, 64)
+		if err3 != nil {
+			return 0, 0, 0, false
+		}
+		total = tv
+	}
+	return s, e, total, true
+}
+
 // writeTSFromResponse writes the cleaned response body to currPath.
-// It lands via a .part temp file: when unencrypted, SyncBytes are stripped
-// streaming-wise to avoid holding everything in memory; on retry failure the
-// .part is cleaned up so partial files never pollute the real one.
-func writeTSFromResponse(res *http.Response, key, currPath string) bool {
+// It lands via a .part temp file: when the response is a 206 that matches the
+// known prefix, the body is appended to resume; otherwise the .part restarts
+// from scratch. A short/interrupted transfer KEEPS the .part so the next
+// attempt (or the next run of the same command) can resume mid-file; the
+// .part is removed once the segment is finalized or proven unusable.
+func writeTSFromResponse(res *http.Response, key, currPath string, resumeFrom int64, rawURL string) bool {
 	partPath := currPath + ".part"
-	out, err := os.Create(partPath)
+
+	// Only continue an existing .part when we can map this response onto it
+	// (206 appended at our offset, or a full-body restart); anything else —
+	// including a broken 206 surviving the earlier re-fetch — fails loudly.
+	seek, rangeTotal, ok := rangeResume(res, resumeFrom)
+	if !ok {
+		return false
+	}
+
+	out, err := os.OpenFile(partPath, os.O_CREATE|os.O_WRONLY, 0o666)
 	if err != nil {
 		return false
 	}
-	defer os.Remove(partPath)
-
-	written, err := io.Copy(out, res.Body)
-	out.Close()
-	if err != nil || written == 0 {
-		return false
-	}
-	// Check length: when Content-Length is trustworthy, a short packet means incomplete
-	if cl := res.Header.Get("Content-Length"); cl != "" {
-		if want, _ := strconv.ParseInt(cl, 10, 64); want > 0 && written < want {
+	if seek > 0 {
+		if _, err := out.Seek(seek, io.SeekStart); err != nil {
+			out.Close()
 			return false
 		}
+	} else if err := out.Truncate(0); err != nil {
+		out.Close()
+		return false
+	}
+	if seek == 0 {
+		// The .part restarts from this response, so it now belongs to this
+		// URL/validators; record them for the next resume verification.
+		writePartMeta(partPath+".meta", rawURL, res)
+	}
+
+	written, err := io.Copy(out, throttleReads(withInactivityTimeout(res.Body, reqTimeout), res.Request.Context()))
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil || (written == 0 && seek == 0) {
+		if written == 0 && seek == 0 {
+			dropPart(partPath) // nothing was landed, no point keeping an empty .part
+		}
+		return false
+	}
+	// Check length: when Content-Length is trustworthy, a short packet means
+	// an incomplete body (kept as .part for the next resume attempt).
+	want := seek + written
+	if cl := res.Header.Get("Content-Length"); cl != "" {
+		if body, _ := strconv.ParseInt(cl, 10, 64); body > 0 {
+			want = seek + body
+		}
+	}
+	// A server may cap a 206 to a subrange (e.g. bytes 100-199/1000): only
+	// finalize once the accumulated .part reaches the advertised total,
+	// otherwise keep it so the next attempt resumes the missing tail.
+	if rangeTotal > want {
+		want = rangeTotal
+	}
+	if got := fileSizeOf(partPath); got < want {
+		return false
 	}
 
 	// Decrypt + strip leading junk
@@ -1016,7 +1301,12 @@ func writeTSFromResponse(res *http.Response, key, currPath string) bool {
 	} else {
 		decErr = stripLeadingJunkFile(partPath, currPath)
 	}
-	return decErr == nil
+	if decErr != nil {
+		dropPart(partPath) // bytes unusable (bad key/corrupt): restart clean
+		return false
+	}
+	dropPart(partPath) // segment landed successfully
+	return true
 }
 
 // decryptFileTo decrypts an AES segment (CBC) and writes it to the target file

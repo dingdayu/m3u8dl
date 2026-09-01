@@ -90,9 +90,12 @@ Common flags:
 | `-j/--json` | structured JSON result | off |
 | `-l/--list` | batch list file, one URL per line | — |
 | `-s/--insecure` | allow insecure TLS | off |
+| `--rate-limit` | aggregate speed cap, e.g. `2M` / `500KB` (bytes/s) | `0`/empty = unlimited |
 
 Exit code is non-zero on failure. On partial failure, the ts directory is kept;
-re-running the same command resumes only the missing segments.
+re-running the same command resumes only the missing segments. Segments
+interrupted mid-transfer are kept as `<name>.ts.part` and resume byte-by-byte
+via HTTP Range on the next attempt.
 
 ## Tips for automation
 

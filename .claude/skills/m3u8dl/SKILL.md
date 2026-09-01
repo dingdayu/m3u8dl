@@ -44,16 +44,17 @@ m3u8dl --url "https://example.com/index.m3u8" --json
 Default flags are sane (24 threads, output `movie.mp4` in the current
 directory). Override only what the user asks for:
 
-| Need | Flag |
-| --- | --- |
-| Output file base name (no extension) | `-o <name>` |
-| Output directory | `--save-path <dir>` |
-| Concurrency (default 24) | `-n <threads>` |
-| Remove ad/duplicate segments | `--purge-dup` |
-| Batch: one URL per line | `-l/--list <file.txt>` |
+| Need                                  | Flag                                                                    |
+| ------------------------------------- | ----------------------------------------------------------------------- |
+| Output file base name (no extension)  | `-o <name>`                                                             |
+| Output directory                      | `--save-path <dir>`                                                     |
+| Concurrency (default 24)              | `-n <threads>`                                                          |
+| Remove ad/duplicate segments          | `--purge-dup`                                                           |
+| Batch: one URL per line               | `-l/--list <file.txt>`                                                  |
 | Auth headers when the host needs them | `-c/--cookie`, `-r/--referer`, `-H "K: V"` (repeatable), `--user-agent` |
-| Self-signed TLS | `-s/--insecure` |
-| Per-request timeout seconds | `-t <sec>` |
+| Self-signed TLS                       | `-s/--insecure`                                                         |
+| Per-request timeout seconds           | `-t <sec>`                                                              |
+| Cap aggregate download speed          | `--rate-limit 2M` (e.g. `500KB`; bytes/s; `0`/empty = unlimited)        |
 
 Full flag semantics: [references/flags.md](references/flags.md).
 
@@ -66,8 +67,9 @@ Success = exit code `0` AND `"ok":true` on stdout. Report `path` and
 On failure: read `error` (and stderr logs), then consult
 [references/troubleshooting.md](references/troubleshooting.md). Common ones:
 
-- **Missing/broken segments** — the TS directory is kept; simply re-run the
-  *same command* to resume only the missing segments.
+- **Missing/broken segments** — the TS dir is kept, and interrupted segments
+  are kept byte-by-byte in `<name>.ts.part`. Re-run the _same command_: missing
+  segments are re-fetched and partial ones resume mid-file via HTTP Range.
 - **Encrypted playlist** — AES-128 is handled automatically when the `KEY` URI
   is reachable; 403s on segments usually mean the playlist host requires a
   cookie/referer (see flags above).
@@ -81,7 +83,7 @@ On failure: read `error` (and stderr logs), then consult
 - In batch mode (`--list`), a single failed URL fails the whole run
   (exit 1, `ok:false`); the log lists the failures. Re-running skips URLs
   whose MP4 already exists and retries the rest.
-- `--purge-dup` removes *all* occurrences of a duplicated segment hash; for
+- `--purge-dup` removes _all_ occurrences of a duplicated segment hash; for
   legitimate playlists with repeated segments (looping backgrounds), leave it
   off.
 - The positional form `m3u8dl <url> [name]` is legacy-compatible; prefer `-u`.

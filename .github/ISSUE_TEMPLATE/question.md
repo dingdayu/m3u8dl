@@ -14,6 +14,7 @@ What are you trying to accomplish? Include the command you're using and any
 relevant output (prefer `--json`).
 
 **Environment**
+
 - m3u8dl version:
 - OS / arch:
 

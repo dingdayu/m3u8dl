@@ -4,25 +4,26 @@
 m3u8dl [flags] <m3u8-url> [outputName]
 ```
 
-| Flag | Short | Default | Meaning |
-| --- | --- | --- | --- |
-| `--url` | `-u` | — | m3u8 URL (`http(s)://.../index.m3u8`). Also accepted as first positional arg. |
-| `--threads` | `-n` | `24` | Concurrent TS-segment downloads. Lower (8) for flaky/strict hosts, raise (32–64) for fast CDNs. |
-| `--output` | `-o` | `movie` | Output MP4 base name, no extension. Also accepted as second positional arg. |
-| `--save-path` | — | cwd | Output directory. Must already exist. Legacy: `-sp`. |
-| `--host-type` | — | `v2` | How relative TS/KEY URIs are resolved: `v2` = against `scheme://host`; `v1` = against `scheme://host/<dir-of-m3u8>`; `auto` = `v1` first, falling back to `v2` on failure. Try the other mode when segments 404. Legacy: `-ht`. |
-| `--cookie` | `-c` | — | `Cookie` request header for hosts that gate segments. |
-| `--referer` | `-r` | m3u8 host | `Referer` header. Many CDNs reject segments without the player's referer. |
-| `--user-agent` | — | Chrome UA | `User-Agent` header. Legacy: `-ua`. |
-| `--header` | `-H` | — | Extra header, repeatable: `-H "Key: Value"`. |
-| `--timeout` | `-t` | `120` | Per-request timeout in seconds. |
-| `--insecure` | `-s` | off | Skip TLS verification (self-signed hosts only). |
-| `--purge-dup` | — | off | Scan and remove ALL occurrences of duplicate-content (ad) segments by hash. Legacy: `-pd`. |
-| `--clean-ts` | — | true | Delete the TS dir after successful merge (keep for debugging with `--clean-ts=false`). |
-| `--json` | `-j` | off | Print one structured JSON result to stdout; logs stay on stderr. |
-| `--list` | `-l` | — | Batch file, one m3u8 URL per line. Per-URL output names are `<output>_NNN.mp4`. |
-| `--version` | — | — | Print version (also `m3u8dl version <x>` template). |
-| `--help` | `-h` | — | Full help. |
+| Flag           | Short | Default   | Meaning                                                                                                                                                                                                                         |
+| -------------- | ----- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--url`        | `-u`  | —         | m3u8 URL (`http(s)://.../index.m3u8`). Also accepted as first positional arg.                                                                                                                                                   |
+| `--threads`    | `-n`  | `24`      | Concurrent TS-segment downloads. Lower (8) for flaky/strict hosts, raise (32–64) for fast CDNs.                                                                                                                                 |
+| `--output`     | `-o`  | `movie`   | Output MP4 base name, no extension. Also accepted as second positional arg.                                                                                                                                                     |
+| `--save-path`  | —     | cwd       | Output directory. Must already exist. Legacy: `-sp`.                                                                                                                                                                            |
+| `--host-type`  | —     | `v2`      | How relative TS/KEY URIs are resolved: `v2` = against `scheme://host`; `v1` = against `scheme://host/<dir-of-m3u8>`; `auto` = `v1` first, falling back to `v2` on failure. Try the other mode when segments 404. Legacy: `-ht`. |
+| `--cookie`     | `-c`  | —         | `Cookie` request header for hosts that gate segments.                                                                                                                                                                           |
+| `--referer`    | `-r`  | m3u8 host | `Referer` header. Many CDNs reject segments without the player's referer.                                                                                                                                                       |
+| `--user-agent` | —     | Chrome UA | `User-Agent` header. Legacy: `-ua`.                                                                                                                                                                                             |
+| `--header`     | `-H`  | —         | Extra header, repeatable: `-H "Key: Value"`.                                                                                                                                                                                    |
+| `--timeout`    | `-t`  | `120`     | Per-request timeout in seconds.                                                                                                                                                                                                 |
+| `--insecure`   | `-s`  | off       | Skip TLS verification (self-signed hosts only).                                                                                                                                                                                 |
+| `--purge-dup`  | —     | off       | Scan and remove ALL occurrences of duplicate-content (ad) segments by hash. Legacy: `-pd`.                                                                                                                                      |
+| `--clean-ts`   | —     | true      | Delete the TS dir after successful merge (keep for debugging with `--clean-ts=false`).                                                                                                                                          |
+| `--rate-limit` | —     | unlimited | Aggregate download speed cap across ALL threads, token-bucket paced: `2M`, `500KB`, `200000` (plain bytes/s). Suffixes K/KB, M/MB, G/GB are 1024-based, case-insensitive; `0` or empty = unlimited.                             |
+| `--json`       | `-j`  | off       | Print one structured JSON result to stdout; logs stay on stderr.                                                                                                                                                                |
+| `--list`       | `-l`  | —         | Batch file, one m3u8 URL per line. Per-URL output names are `<output>_NNN.mp4`.                                                                                                                                                 |
+| `--version`    | —     | —         | Print version (also `m3u8dl version <x>` template).                                                                                                                                                                             |
+| `--help`       | `-h`  | —         | Full help.                                                                                                                                                                                                                      |
 
 Legacy compatibility: old multi-char single-dash flags (`-ht`, `-sp`, `-pd`,
 `-ua`, ...) are rewritten to the semantic long flags automatically, so
@@ -35,6 +36,18 @@ existing scripts keep working.
 - AES-128 segment encryption (`#EXT-X-KEY`) is decrypted automatically as
   long as the KEY URI is reachable with the same headers.
 - `#EXT-X-MAP` init segments and media initialization are handled during merge.
+
+## Resume & network behavior
+
+- All segment downloads share one pooled HTTP client; TLS connections
+  negotiate HTTP/2 (even with `--insecure`).
+- A segment interrupted mid-transfer is kept as `<name>.ts.part`. Retries and
+  re-runs of the same command resume it with `Range: bytes=<n>-`: a `206`
+  matching the stored prefix appends only the tail; a `200` restarts the
+  segment; a `416` (stale offset) drops the `.part` and redownloads it whole.
+- Finished segments have their `.part` removed; with `--clean-ts` the TS dir
+  (and any `.part` files) disappears after a successful merge.
+- `--rate-limit` throttles the sum over all threads, not each thread.
 
 ## Batch list file
 
