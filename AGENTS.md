@@ -84,7 +84,10 @@ skills install|list` subcommand lets any installed binary (npm, go
 
 ## Code Style & Conventions
 
-- The codebase is single-package (`main`) and single-file (`m3u8dl.go`). Keep it that way.
+- The codebase is a single `main` package. `m3u8dl.go` holds the CLI and core
+  download logic; a cohesive, self-contained unit may live in its own file
+  pair (`<unit>.go` + `<unit>_test.go`) — currently rate limiting
+  (`rate_limit.go`).
 - Comments and documentation are written in **English** (see note below).
 - User-facing CLI help text and log/error messages may stay in the project's
   target language as configured; run `m3u8dl --help` to see the current strings.
@@ -99,7 +102,7 @@ Follow this loop for any code change so PRs land clean and reviewable:
 1. **Branch first** — never commit directly to `main`. Create a focused branch:
    `git checkout -b feat/my-change` (see branches below).
 2. **Write the change** — keep it minimal and aligned with the conventions
-   above: English comments, single-file/single-package, atomic concurrency.
+   above: English comments, single-package, atomic concurrency.
 3. **Format & verify** — run `make build` (runs gofmt + go vet + build). Before
    committing, ensure `make hooks-run` passes (all file hygiene checks,
    formatting, and linting).
