@@ -50,7 +50,7 @@ jobs:
       VERSION: ${{ needs.release-please.outputs.version }}
     steps:
       - name: Checkout (at release commit)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Checkout the commit that this run pushed (which is exactly the
           # commit release-please tagged its draft release against). We can't
@@ -70,7 +70,7 @@ jobs:
           TAG: ${{ needs.release-please.outputs.tag_name }}
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: "1.27.x"
 
@@ -78,7 +78,7 @@ jobs:
         run: go mod download
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           # Node 24 bundles npm >= 11.5.1, required for trusted publishing.
           node-version: "24.x"
@@ -87,12 +87,12 @@ jobs:
       # Goreleaser shells out to the syft binary for the sboms section in
       # .goreleaser.yml; the goreleaser-action does not install it.
       - name: Install syft (SBOM generator)
-        uses: anchore/sbom-action/download-syft@v0.24.2
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
 
       # Build + archive + checksums + SBOMs exactly ONCE. --skip=publish
       # keeps everything in dist/ and creates no GitHub release of its own.
       - name: Build all artifacts (goreleaser, no publish)
-        uses: goreleaser/goreleaser-action@v7
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
         with:
           distribution: goreleaser
           version: latest
@@ -107,14 +107,14 @@ jobs:
 
       # Attest the exact bytes that will be uploaded later.
       - name: Attest archive artifacts (.tar.gz / .zip)
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: |
             dist/*.tar.gz
             dist/*.zip
 
       - name: Attest checksums (archives + raw binaries)
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: |
             dist/checksums.txt
