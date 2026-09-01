@@ -5,11 +5,11 @@
 name: release-please
 
 on:
-  push:
-    branches:
-      - main
-  # Also exposed as a reusable workflow so release.yml can call it and read
-  # its outputs (release_created / tag_name / version).
+  # This is a reusable workflow driven ONLY by release.yml (which triggers on
+  # push to main). It deliberately has NO `on: push` of its own: running it
+  # both standalone and via workflow_call would run release-please twice on
+  # the same PR, racing on its labels (a released PR loses `autorelease:
+  # pending`, and the second run then fails removing an already-gone label).
   workflow_call:
     outputs:
       release_created:
