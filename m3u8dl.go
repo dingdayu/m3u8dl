@@ -1271,7 +1271,7 @@ func writeTSFromResponse(res *http.Response, key, currPath string, resumeFrom in
 		err = cerr
 	}
 	if err != nil || (written == 0 && seek == 0) {
-		if written == 0 {
+		if written == 0 && seek == 0 {
 			dropPart(partPath) // nothing was landed, no point keeping an empty .part
 		}
 		return false

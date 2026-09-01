@@ -581,3 +581,72 @@ func TestResponseHeaderTimeoutAbortsStall(t *testing.T) {
 		t.Fatalf("header stall took %v; ResponseHeaderTimeout should abort in ~150ms", elapsed)
 	}
 }
+
+// When a verified ranged response dies before its first body byte, the
+// persisted .part is still valid progress: it must be kept (not dropped) so
+// the next retry resumes instead of restarting from byte zero.
+func TestResumeKeepsPrefixWhenRangedBodyEmpty(t *testing.T) {
+	withRestoredGlobals(t)
+	data := resumeBody(50000)
+	total := int64(len(data))
+
+	var failFirst atomic.Bool
+	failFirst.Store(true)
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("ETag", `"seg"`)
+			if rg := r.Header.Get("Range"); rg != "" {
+				var start int64
+				if _, err := fmt.Sscanf(rg, "bytes=%d-", &start); err != nil {
+					http.Error(w, "bad range", http.StatusBadRequest)
+					return
+				}
+				w.Header().Set("Content-Range",
+					fmt.Sprintf("bytes %d-%d/%d", start, total-1, total))
+				w.Header().Set("Content-Length", fmt.Sprintf("%d", total-start))
+				w.WriteHeader(http.StatusPartialContent)
+				if failFirst.CompareAndSwap(true, false) {
+					// Die right after the 206 headers: zero body bytes land.
+					if hj, ok := w.(http.Hijacker); ok {
+						if conn, _, err := hj.Hijack(); err == nil {
+							_ = conn.Close()
+						}
+					}
+					return
+				}
+				_, _ = w.Write(data[start:])
+				return
+			}
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", total))
+			_, _ = w.Write(data)
+		}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	curr := filepath.Join(dir, "00001.ts")
+	part := curr + ".part"
+	if err := os.WriteFile(part, data[:20000], 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(part+".meta", []byte(srv.URL+"/00001.ts\n\"seg\"\n"), 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	if tryDownload(srv.URL+"/00001.ts", "", curr) {
+		t.Fatal("an empty ranged body must fail the attempt")
+	}
+	if got := fileSizeOf(part); got != 20000 {
+		t.Fatalf("previous progress must be kept for the next resume, .part=%d", got)
+	}
+
+	if !tryDownload(srv.URL+"/00001.ts", "", curr) {
+		t.Fatal("retry must resume from the kept prefix and complete")
+	}
+	got, err := os.ReadFile(curr)
+	if err != nil {
+		t.Fatalf("read finalized segment: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatal("finalized content differs from the served body")
+	}
+}
