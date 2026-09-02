@@ -63,22 +63,26 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Checkout the commit that this run pushed (which is exactly the
-          # commit release-please tagged its draft release against). We can't
-          # checkout by tag here: with draft:true release-please creates the
-          # draft release + tag_name WITHOUT creating the tag object, so a
-          # `ref: <tag>` would fail ("tag could not be found").
+          # commit release-please tagged its draft release against). We check
+          # out by SHA rather than by tag: with draft:true the tag is created
+          # immediately thanks to force-tag-creation, but pinning the SHA keeps
+          # this step correct even if that tag creation ever lags or fails.
           ref: ${{ github.sha }}
           fetch-depth: 0 # required by goreleaser for git metadata
 
-      # release-please draft mode never creates the tag object itself; the
-      # git tag is materialized on undraft. Create it up front so the later
-      # `gh release upload "$TAG"` and `gh release edit "$TAG" --draft=false`
-      # steps can resolve it (they address the release by tag name).
+      # release-please creates the git tag immediately for its draft release
+      # (force-tag-creation in release-please-config.json), which is what lets
+      # the NEXT push-to-main run find this release boundary instead of
+      # regenerating a stale changelog. This step is a defensive, idempotent
+      # guarantee that refs/tags/$TAG exists and resolves to the release commit
+      # so the later `gh release upload "$TAG"` and
+      # `gh release edit "$TAG" --draft=false` steps can resolve it.
       #
       # Idempotent so this job can be rerun safely after a later release-stage
       # failure: if the tag already exists on origin it must resolve to this
       # run's release commit (fail loudly otherwise). An existing tag is
-      # never moved, deleted or force-pushed.
+      # never moved, deleted or force-pushed — so when release-please already
+      # created it, this step is a no-op verification.
       - name: Create release tag
         env:
           TAG: ${{ needs.release-please.outputs.tag_name }}
