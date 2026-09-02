@@ -50,5 +50,9 @@ jobs:
           # trigger CI automatically and avoids the bot-PR workflow-approval
           # gate. Permissions needed: Contents + Pull requests (read/write).
           token: ${{ secrets.RELEASE_PLEASE_PAT }}
-        # Config comes from release-please-config.json (draft: true) and
-        # .release-please-manifest.json at the repo root.
+        # Config comes from release-please-config.json and
+        # .release-please-manifest.json at the repo root. The config sets
+        # draft:true together with force-tag-creation:true, so merging a
+        # release PR creates the git tag immediately; the next push-to-main
+        # run then finds this release boundary instead of regenerating a stale
+        # changelog. release.yml materializes/publishes the draft afterward.
