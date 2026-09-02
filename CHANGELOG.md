@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/dingdayu/m3u8dl/compare/v0.1.6...v0.1.7) (2026-09-02)
+
+
+### Bug Fixes
+
+* **release:** force tag creation so draft releases set a stable baseline ([ecdf823](https://github.com/dingdayu/m3u8dl/commit/ecdf823dc2b522cf19f44289da9abde8b4235192))
+
 ## [0.1.6](https://github.com/dingdayu/m3u8dl/compare/v0.1.5...v0.1.6) (2026-09-02)
 
 
