@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.6](https://github.com/dingdayu/m3u8dl/compare/v0.1.5...v0.1.6) (2026-09-02)
+
+
+### Bug Fixes
+
+* **release:** declare RELEASE_PLEASE_PAT secret on workflow_call ([4e757c5](https://github.com/dingdayu/m3u8dl/commit/4e757c5e4e075548a07c781e0a469b652a167543))
+* **release:** make release tag creation rerunnable ([a86bc1b](https://github.com/dingdayu/m3u8dl/commit/a86bc1b26c97529391ea2a88aa057b355cc59b3d))
+
 ## [0.1.5](https://github.com/dingdayu/m3u8dl/compare/v0.1.4...v0.1.5) (2026-09-01)
 
 
