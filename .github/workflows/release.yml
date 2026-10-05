@@ -140,7 +140,7 @@ jobs:
       # Goreleaser shells out to the syft binary for the sboms section in
       # .goreleaser.yml; the goreleaser-action does not install it.
       - name: Install syft (SBOM generator)
-        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
 
       # Build + archive + checksums + SBOMs exactly ONCE. --skip=publish
       # keeps everything in dist/ and creates no GitHub release of its own.
